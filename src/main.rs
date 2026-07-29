@@ -81,7 +81,7 @@ fn run_last(path: &Path, n: usize) -> Result<i32> {
 
     let mut out = String::new();
     for e in &entries[start..] {
-        out.push_str(&e.render());
+        out.push_str(&e.display());
     }
     print!("{out}");
     Ok(0)
@@ -101,7 +101,7 @@ fn run_search(path: &Path, query: &str, all: bool, limit: Option<usize>) -> Resu
 
     let mut out = String::new();
     for e in &matches {
-        out.push_str(&e.render());
+        out.push_str(&e.display());
     }
     print!("{out}");
     Ok(0)

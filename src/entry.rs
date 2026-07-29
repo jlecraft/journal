@@ -3,6 +3,10 @@ use chrono::{Local, NaiveDateTime};
 /// `strftime`/`strptime` pattern matching the `[YYYY-MM-DD.HH:MM:SS]` format from §2.
 pub const TIMESTAMP_FMT: &str = "%Y-%m-%d.%H:%M:%S";
 
+/// `strftime` pattern for the header as shown to a human (`journal -s`,
+/// `journal -N`), distinct from the on-disk `TIMESTAMP_FMT`.
+const DISPLAY_TIMESTAMP_FMT: &str = "%Y-%m-%d %H:%M:%S";
+
 /// An entry's timestamp line is always on its own line, with nothing
 /// else on it (§2). Tags are no longer a separate structured field --
 /// they're just `@word` tokens that happen to appear somewhere in the
@@ -43,6 +47,19 @@ impl Entry {
     /// terminates every entry (§2).
     pub fn render(&self) -> String {
         let mut out = format!("[{}]\n", self.timestamp.format(TIMESTAMP_FMT));
+        if !self.body.is_empty() {
+            out.push_str(&self.body);
+            out.push('\n');
+        }
+        out.push('\n');
+        out
+    }
+
+    /// Renders an entry for display to a human (`journal -s`, `journal
+    /// -N`): the same body as `render`, but with the header reformatted
+    /// as `> YYYY-MM-DD HH:MM:SS` rather than the on-disk `[...]` form.
+    pub fn display(&self) -> String {
+        let mut out = format!("> {}\n", self.timestamp.format(DISPLAY_TIMESTAMP_FMT));
         if !self.body.is_empty() {
             out.push_str(&self.body);
             out.push('\n');
