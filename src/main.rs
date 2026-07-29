@@ -1,5 +1,6 @@
 mod cli;
 mod entry;
+mod search;
 mod storage;
 
 use std::path::Path;
@@ -10,18 +11,32 @@ use cli::Cli;
 use entry::Entry;
 
 fn main() {
-    if let Err(err) = run() {
-        eprintln!("journal: {err:#}");
-        std::process::exit(1);
+    let cli = Cli::parse();
+    if let Err(msg) = cli.validate() {
+        eprintln!("journal: {msg}");
+        std::process::exit(2);
+    }
+    match run(cli) {
+        Ok(code) => std::process::exit(code),
+        Err(err) => {
+            eprintln!("journal: {err:#}");
+            std::process::exit(1);
+        }
     }
 }
 
-fn run() -> Result<()> {
-    let cli = Cli::parse();
+fn run(cli: Cli) -> Result<i32> {
     let path = storage::resolve_path(cli.file.as_deref())?;
 
+    if let Some(query) = &cli.search {
+        return run_search(&path, query, cli.all, cli.limit);
+    }
+
     match cli.text {
-        Some(text) => append(&path, &text, cli.tags.as_deref()),
+        Some(text) => {
+            append(&path, &text, cli.tags.as_deref())?;
+            Ok(0)
+        }
         None => bail!(
             "no entry text given, and editor mode isn't implemented yet -- \
              pass entry text as an argument for now, e.g. journal \"note @tag\""
@@ -35,4 +50,24 @@ fn append(path: &Path, text: &str, tags_flag: Option<&str>) -> Result<()> {
     let tags = entry::merge_tags(inline_tags, flag_tags);
     let e = Entry::now(tags, body);
     storage::append_entry(path, &e.render())
+}
+
+/// Returns the process exit code: 0 if at least one entry matched, 1 if
+/// none did (grep-style; see §6.4 exit code convention).
+fn run_search(path: &Path, query: &str, all: bool, limit: Option<usize>) -> Result<i32> {
+    let contents = storage::read_contents(path)?;
+    let entries = Entry::parse_all(&contents);
+    let opts = search::SearchOptions { all, limit };
+    let matches = search::search(&entries, query, &opts);
+
+    if matches.is_empty() {
+        return Ok(1);
+    }
+
+    let mut out = String::new();
+    for e in &matches {
+        out.push_str(&e.render());
+    }
+    print!("{out}");
+    Ok(0)
 }

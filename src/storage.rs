@@ -56,10 +56,23 @@ pub fn ensure_exists(path: &Path) -> Result<()> {
     }
     OpenOptions::new()
         .create(true)
+        .truncate(false)
         .write(true)
         .open(path)
         .with_context(|| format!("failed to create journal file at {}", path.display()))?;
     Ok(())
+}
+
+/// Reads the journal file's full contents for searching. A missing file
+/// is treated as an empty journal rather than an error, and -- unlike
+/// `append_entry` -- this never creates the file: a read-only operation
+/// like search shouldn't have filesystem side effects.
+pub fn read_contents(path: &Path) -> Result<String> {
+    if !path.exists() {
+        return Ok(String::new());
+    }
+    std::fs::read_to_string(path)
+        .with_context(|| format!("failed to read journal file at {}", path.display()))
 }
 
 /// Appends `rendered` (an already-formatted `Entry::render()` string) to
@@ -155,6 +168,22 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("no-such-subdir").join("journal.txt");
         assert!(ensure_exists(&path).is_err());
+    }
+
+    #[test]
+    fn read_contents_returns_empty_string_for_missing_file_without_creating_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("journal.txt");
+        assert_eq!(read_contents(&path).unwrap(), "");
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn read_contents_returns_existing_file_contents() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("journal.txt");
+        std::fs::write(&path, "hello\n").unwrap();
+        assert_eq!(read_contents(&path).unwrap(), "hello\n");
     }
 
     #[test]
