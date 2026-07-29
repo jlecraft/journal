@@ -1,16 +1,11 @@
-mod cli;
-mod editor;
-mod entry;
-mod search;
-mod storage;
-
 use std::io::Read;
 use std::path::Path;
 
 use anyhow::{Context, Result};
 use clap::Parser;
-use cli::Cli;
-use entry::Entry;
+use journal::cli::Cli;
+use journal::entry::Entry;
+use journal::{editor, entry, search, storage};
 
 fn main() {
     let cli = Cli::parse();

@@ -1,0 +1,36 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH journal 1  "journal 0.1.0" 
+.SH NAME
+journal \- A command\-line utility for appending timestamped, taggable entries to a plain\-text journal file, and searching that file by tag or keyword.
+.SH SYNOPSIS
+\fBjournal\fR [\fB\-t\fR|\fB\-\-tags\fR] [\fB\-f\fR|\fB\-\-file\fR] [\fB\-s\fR|\fB\-\-search\fR] [\fB\-a\fR|\fB\-\-all\fR] [\fB\-\-limit\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fB\-V\fR|\fB\-\-version\fR] [\fITEXT\fR] 
+.SH DESCRIPTION
+A command\-line utility for appending timestamped, taggable entries to a plain\-text journal file, and searching that file by tag or keyword.
+.SH OPTIONS
+.TP
+\fB\-t\fR, \fB\-\-tags\fR \fI<TAGS>\fR
+Explicit tags for this entry, e.g. "@bp @health". Combined with any trailing tags already present in TEXT and de\-duplicated
+.TP
+\fB\-f\fR, \fB\-\-file\fR \fI<PATH>\fR
+Path to the journal file. Overrides $JOURNAL_FILE and the XDG default
+.TP
+\fB\-s\fR, \fB\-\-search\fR \fI<QUERY>\fR
+Search the journal instead of appending. Terms are whitespace\- separated; a `+` inside a term joins words (linux+kernel matches the substring "linux kernel"). @\-prefixed terms match tags exactly (full word); other terms are case\-insensitive substring matches against the whole entry
+.TP
+\fB\-a\fR, \fB\-\-all\fR
+Require every search term to match (default: match on any term). Only valid alongside \-s/\-\-search
+.TP
+\fB\-\-limit\fR \fI<N>\fR
+Cap the number of printed search matches. Only valid alongside \-s/\-\-search
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+\fB\-V\fR, \fB\-\-version\fR
+Print version
+.TP
+[\fITEXT\fR]
+Entry text to append. Trailing @tags are extracted automatically. Pass "\-" to read the entry text from stdin instead. If omitted entirely, opens $EDITOR (or vi) to compose a new entry
+.SH VERSION
+v0.1.0

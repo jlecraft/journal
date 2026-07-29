@@ -2,6 +2,9 @@
 name = "journal"
 version = "0.1.0"
 edition = "2024"
+description = "A command-line utility for appending timestamped, taggable entries to a plain-text journal file, and searching that file by tag or keyword."
+license = "GPL-3.0-or-later"
+repository = "https://github.com/jlecraft/journal"
 
 [dependencies]
 anyhow = "1.0.104"
@@ -14,5 +17,6 @@ xdg = "3.0.0"
 
 [dev-dependencies]
 assert_cmd = "2.2.2"
+clap_mangen = "0.3.0"
 predicates = "3.1.4"
 tempfile = "3.27.0"

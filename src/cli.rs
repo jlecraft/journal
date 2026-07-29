@@ -29,14 +29,18 @@ pub struct Cli {
     pub search: Option<String>,
 
     /// Require every search term to match (default: match on any term).
-    /// Only valid alongside -s/--search; checked in `Cli::validate`, not
-    /// via clap's `requires`, which doesn't reliably fire here in
-    /// combination with `text`'s `conflicts_with = "search"`.
+    /// Only valid alongside -s/--search.
+    // Enforced in Cli::validate, not via clap's `requires`: that attribute
+    // doesn't reliably fire here in combination with `text`'s
+    // `conflicts_with = "search"` (verified via an isolated repro during
+    // Milestone 4). This is a plain `//` comment, not `///`, on purpose --
+    // clap derive turns doc comments into --help/man page text, and this
+    // detail is for maintainers, not end users.
     #[arg(short = 'a', long = "all")]
     pub all: bool,
 
     /// Cap the number of printed search matches. Only valid alongside
-    /// -s/--search; see the note on `all` above.
+    /// -s/--search.
     #[arg(long = "limit", value_name = "N")]
     pub limit: Option<usize>,
 }
