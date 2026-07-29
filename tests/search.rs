@@ -123,7 +123,7 @@ fn limit_caps_result_count() {
         .stdout
         .clone();
     let s = String::from_utf8(out).unwrap();
-    assert_eq!(s.matches("> 2026-").count(), 1); // one entry's worth of output
+    assert_eq!(s.matches("### 2026-").count(), 1); // one entry's worth of output
 }
 
 #[test]
@@ -152,7 +152,7 @@ fn matches_are_separated_by_a_blank_line() {
         .stdout
         .clone();
     let s = String::from_utf8(out).unwrap();
-    assert!(s.contains("124/80/55 @bp @health\n\n> 2026-07-05"));
+    assert!(s.contains("124/80/55 @bp @health\n\n### 2026-07-05"));
 }
 
 #[test]

@@ -57,9 +57,12 @@ impl Entry {
 
     /// Renders an entry for display to a human (`journal -s`, `journal
     /// -N`): the same body as `render`, but with the header reformatted
-    /// as `> YYYY-MM-DD HH:MM:SS` rather than the on-disk `[...]` form.
+    /// as `### YYYY-MM-DD HH:MM:SS` rather than the on-disk `[...]` form.
+    /// An ATX heading, unlike a blockquote, has no lazy-continuation --
+    /// Markdown renderers (e.g. `bat`) color only this line, not the body
+    /// line that follows it.
     pub fn display(&self) -> String {
-        let mut out = format!("> {}\n", self.timestamp.format(DISPLAY_TIMESTAMP_FMT));
+        let mut out = format!("### {}\n", self.timestamp.format(DISPLAY_TIMESTAMP_FMT));
         if !self.body.is_empty() {
             out.push_str(&self.body);
             out.push('\n');
