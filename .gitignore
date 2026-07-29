@@ -1,0 +1,5 @@
+/target
+Cargo.lock.bak
+
+# Pre-existing, unrelated local directory - keep out of version control
+.venv/
