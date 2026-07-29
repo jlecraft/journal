@@ -43,15 +43,24 @@ impl Entry {
 
     /// Parses a single entry block: a header line followed by its body
     /// lines (a trailing terminator blank line, if present, is trimmed).
+    /// Any non-tag text found on the header line itself (e.g. from a
+    /// hand-edit, or an editor session where body text landed on the
+    /// timestamp line by mistake) is folded into the body rather than
+    /// discarded -- parsing must never silently drop file content.
     pub fn parse(raw: &str) -> Option<Entry> {
         let mut lines = raw.lines();
         let header = lines.next()?;
-        let (timestamp, tags) = parse_header(header)?;
-        let body = normalize_trailing_blank_lines(&lines.collect::<Vec<_>>().join("\n"));
+        let (timestamp, tags, header_overflow) = parse_header(header)?;
+        let rest = lines.collect::<Vec<_>>().join("\n");
+        let body = match header_overflow {
+            Some(overflow) if rest.is_empty() => overflow,
+            Some(overflow) => format!("{overflow}\n{rest}"),
+            None => rest,
+        };
         Some(Entry {
             timestamp,
             tags,
-            body,
+            body: normalize_trailing_blank_lines(&body),
         })
     }
 
@@ -75,18 +84,52 @@ impl Entry {
             })
             .collect()
     }
+
+    /// Returns the byte offset in `text` where its last header-line-led
+    /// entry begins, or `None` if `text` contains no header line at all.
+    /// Used by editor mode to isolate the newly-composed entry from
+    /// everything before it, which is left untouched.
+    pub(crate) fn last_entry_start(text: &str) -> Option<usize> {
+        let mut offset = 0;
+        let mut last = None;
+        for line in text.split_inclusive('\n') {
+            let trimmed = line.strip_suffix('\n').unwrap_or(line);
+            if parse_header(trimmed).is_some() {
+                last = Some(offset);
+            }
+            offset += line.len();
+        }
+        last
+    }
 }
 
-fn parse_header(line: &str) -> Option<(NaiveDateTime, Vec<String>)> {
+/// Parses a header line into `(timestamp, tags, header_overflow)`.
+/// `tags` is the leading contiguous run of `@tag` tokens after the
+/// timestamp, matching the canonical on-disk format (§2). Anything from
+/// the first non-tag token onward -- which shouldn't normally be there,
+/// but can appear from a hand-edit or a stray editor keystroke -- is
+/// returned as `header_overflow` rather than silently dropped, so the
+/// caller can fold it into the body instead of losing it.
+fn parse_header(line: &str) -> Option<(NaiveDateTime, Vec<String>, Option<String>)> {
     let rest = line.strip_prefix('[')?;
     let (ts_str, rest) = rest.split_once(']')?;
     let timestamp = NaiveDateTime::parse_from_str(ts_str, TIMESTAMP_FMT).ok()?;
-    let tags = rest
-        .split_whitespace()
-        .filter(|t| is_tag_token(t))
-        .map(|t| t.to_string())
-        .collect();
-    Some((timestamp, tags))
+
+    let mut tokens = rest.split_whitespace();
+    let mut tags = Vec::new();
+    let mut overflow_tokens = Vec::new();
+    for tok in tokens.by_ref() {
+        if is_tag_token(tok) {
+            tags.push(tok.to_string());
+        } else {
+            overflow_tokens.push(tok);
+            break;
+        }
+    }
+    overflow_tokens.extend(tokens);
+    let overflow = (!overflow_tokens.is_empty()).then(|| overflow_tokens.join(" "));
+
+    Some((timestamp, tags, overflow))
 }
 
 fn is_tag_token(token: &str) -> bool {
@@ -153,8 +196,9 @@ pub fn merge_tags(inline: Vec<String>, flag: Vec<String>) -> Vec<String> {
 }
 
 /// Trims trailing blank (or whitespace-only) lines from `body`, per the
-/// terminator normalization rule in §2.
-fn normalize_trailing_blank_lines(body: &str) -> String {
+/// terminator normalization rule in §2. Also reused by editor mode
+/// (§5.1) to normalize the whole file after a save.
+pub(crate) fn normalize_trailing_blank_lines(body: &str) -> String {
     let mut lines: Vec<&str> = body.lines().collect();
     while matches!(lines.last(), Some(l) if l.trim().is_empty()) {
         lines.pop();
@@ -260,6 +304,35 @@ mod tests {
     }
 
     #[test]
+    fn stray_non_tag_text_on_the_header_line_is_preserved_in_the_body() {
+        // The canonical format only ever puts @tags after the timestamp
+        // (§2), but a hand-edit or a slipped keystroke could leave plain
+        // text there instead. Parsing must fold it into the body, not
+        // silently drop it -- search/editor mode both round-trip through
+        // parse+render, so any discarded text here would be permanently
+        // lost the next time the file is touched.
+        let parsed = Entry::parse("[2026-07-28.14:03:00] oops no newline before this").unwrap();
+        assert!(parsed.tags.is_empty());
+        assert_eq!(parsed.body, "oops no newline before this");
+    }
+
+    #[test]
+    fn tags_before_stray_text_on_header_line_are_still_recognized() {
+        let parsed = Entry::parse("[2026-07-28.14:03:00] @bp stray text @looks-like-a-tag").unwrap();
+        assert_eq!(parsed.tags, vec!["@bp"]);
+        // Once a non-tag token is hit, everything after it -- even a
+        // later @-token -- is body overflow, not a second tag: the tag
+        // run must be contiguous, matching the CLI's own extraction rule.
+        assert_eq!(parsed.body, "stray text @looks-like-a-tag");
+    }
+
+    #[test]
+    fn header_overflow_is_prepended_to_an_existing_body() {
+        let parsed = Entry::parse("[2026-07-28.14:03:00] oops\nreal body line").unwrap();
+        assert_eq!(parsed.body, "oops\nreal body line");
+    }
+
+    #[test]
     fn parses_multiple_entries_from_a_journal_file() {
         let file = "[2026-07-28.14:03:00] @bp\n124/80/55\n\n[2026-07-29.09:00:00]\nslept fine\n\n";
         let entries = Entry::parse_all(file);
@@ -277,5 +350,24 @@ mod tests {
         assert_eq!(entries.len(), 2);
         assert_eq!(entries[0].body, "para one\n\npara two");
         assert_eq!(entries[1].body, "next entry");
+    }
+
+    #[test]
+    fn last_entry_start_finds_offset_of_final_header() {
+        let file = "[2026-07-28.14:03:00]\nfirst\n\n[2026-07-29.09:00:00]\nsecond";
+        let offset = Entry::last_entry_start(file).unwrap();
+        assert_eq!(&file[offset..], "[2026-07-29.09:00:00]\nsecond");
+    }
+
+    #[test]
+    fn last_entry_start_finds_the_only_header_with_no_trailing_newline() {
+        let file = "[2026-07-28.14:03:00]";
+        let offset = Entry::last_entry_start(file).unwrap();
+        assert_eq!(offset, 0);
+    }
+
+    #[test]
+    fn last_entry_start_is_none_without_any_header_line() {
+        assert_eq!(Entry::last_entry_start("just some text\nno header here"), None);
     }
 }

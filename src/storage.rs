@@ -75,25 +75,52 @@ pub fn read_contents(path: &Path) -> Result<String> {
         .with_context(|| format!("failed to read journal file at {}", path.display()))
 }
 
-/// Appends `rendered` (an already-formatted `Entry::render()` string) to
-/// the journal file, creating it first if needed. Per §6.8, the write is
-/// serialized with an exclusive advisory lock (`flock`) held for the
-/// duration of the write and released on drop, and the file descriptor
-/// is opened in `O_APPEND` mode so concurrent writers (e.g. a cron job
-/// and an interactive invocation) can't interleave or clobber entries.
-pub fn append_entry(path: &Path, rendered: &str) -> Result<()> {
-    ensure_exists(path)?;
-    let mut file = OpenOptions::new()
-        .append(true)
-        .open(path)
-        .with_context(|| format!("failed to open journal file at {}", path.display()))?;
-    file.lock_exclusive()
-        .with_context(|| format!("failed to lock journal file at {}", path.display()))?;
-    let result = file
-        .write_all(rendered.as_bytes())
-        .with_context(|| format!("failed to append to journal file at {}", path.display()));
-    let _ = FileExt::unlock(&file);
+/// Runs `f` while holding an exclusive lock scoped to `path`, per §6.8.
+///
+/// The lock is taken on a stable sidecar file (`<path>.lock`), not on
+/// `path` itself. This matters for editor mode (Milestone 5), which
+/// replaces the journal file via `rename` -- a `flock` held on the file
+/// being renamed away is tied to the old inode and stops meaning
+/// anything to processes that open the path afterward, silently
+/// re-opening a lost-update race. Locking a sidecar path that's never
+/// renamed avoids that hazard, and append_entry uses the same helper so
+/// both operations serialize against each other correctly.
+pub fn with_exclusive_lock<T>(path: &Path, f: impl FnOnce() -> Result<T>) -> Result<T> {
+    let lock_path = lock_path_for(path);
+    let lock_file = OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(&lock_path)
+        .with_context(|| format!("failed to open lock file at {}", lock_path.display()))?;
+    lock_file
+        .lock_exclusive()
+        .with_context(|| format!("failed to acquire lock at {}", lock_path.display()))?;
+    let result = f();
+    let _ = FileExt::unlock(&lock_file);
     result
+}
+
+fn lock_path_for(path: &Path) -> PathBuf {
+    let mut lock = path.as_os_str().to_owned();
+    lock.push(".lock");
+    PathBuf::from(lock)
+}
+
+/// Appends `rendered` (an already-formatted `Entry::render()` string) to
+/// the journal file, creating it first if needed. The write is
+/// serialized via `with_exclusive_lock`, and the file descriptor is
+/// opened in `O_APPEND` mode as defense in depth for the write itself.
+pub fn append_entry(path: &Path, rendered: &str) -> Result<()> {
+    with_exclusive_lock(path, || {
+        ensure_exists(path)?;
+        let mut file = OpenOptions::new()
+            .append(true)
+            .open(path)
+            .with_context(|| format!("failed to open journal file at {}", path.display()))?;
+        file.write_all(rendered.as_bytes())
+            .with_context(|| format!("failed to append to journal file at {}", path.display()))
+    })
 }
 
 #[cfg(test)]
@@ -207,5 +234,31 @@ mod tests {
             std::fs::read_to_string(&path).unwrap(),
             "[2026-07-28.14:03:00]\nfirst\n\n[2026-07-28.15:00:00]\nsecond\n\n"
         );
+    }
+
+    #[test]
+    fn with_exclusive_lock_creates_a_sidecar_lock_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("journal.txt");
+        with_exclusive_lock(&path, || Ok(())).unwrap();
+        assert!(dir.path().join("journal.txt.lock").exists());
+    }
+
+    #[test]
+    fn with_exclusive_lock_is_reentrant_safe_after_release() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("journal.txt");
+        with_exclusive_lock(&path, || Ok::<_, anyhow::Error>(())).unwrap();
+        // A second, later call must not deadlock now that the first
+        // call's lock has been released.
+        with_exclusive_lock(&path, || Ok::<_, anyhow::Error>(())).unwrap();
+    }
+
+    #[test]
+    fn with_exclusive_lock_propagates_the_closure_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("journal.txt");
+        let result: Result<()> = with_exclusive_lock(&path, || anyhow::bail!("boom"));
+        assert!(result.is_err());
     }
 }

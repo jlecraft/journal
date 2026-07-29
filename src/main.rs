@@ -1,11 +1,12 @@
 mod cli;
+mod editor;
 mod entry;
 mod search;
 mod storage;
 
 use std::path::Path;
 
-use anyhow::{bail, Result};
+use anyhow::Result;
 use clap::Parser;
 use cli::Cli;
 use entry::Entry;
@@ -37,10 +38,10 @@ fn run(cli: Cli) -> Result<i32> {
             append(&path, &text, cli.tags.as_deref())?;
             Ok(0)
         }
-        None => bail!(
-            "no entry text given, and editor mode isn't implemented yet -- \
-             pass entry text as an argument for now, e.g. journal \"note @tag\""
-        ),
+        None => {
+            editor::compose_new_entry(&path)?;
+            Ok(0)
+        }
     }
 }
 

@@ -1,5 +1,4 @@
 use assert_cmd::Command;
-use predicates::prelude::*;
 use std::fs;
 
 fn cmd() -> Command {
@@ -92,20 +91,6 @@ fn creates_journal_file_and_parent_dirs_via_xdg_default() {
     assert!(fs::read_to_string(&expected)
         .unwrap()
         .contains("entry via xdg default"));
-}
-
-#[test]
-fn no_args_fails_clearly_instead_of_panicking() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("journal.txt");
-
-    cmd()
-        .arg("-f")
-        .arg(&path)
-        .assert()
-        .failure()
-        .code(1)
-        .stderr(predicate::str::contains("editor mode"));
 }
 
 #[test]
