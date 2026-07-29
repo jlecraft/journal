@@ -6,20 +6,26 @@ use std::process::Command;
 use anyhow::{bail, Context, Result};
 use chrono::Local;
 
+use crate::config::Config;
 use crate::entry::{self, normalize_trailing_blank_lines, Entry, TIMESTAMP_FMT};
 use crate::storage;
 
 /// Runs the no-argument "open $EDITOR to compose a new entry" flow
 /// (§5.1). The timestamp is seeded only into a temporary buffer; the
 /// real journal file is untouched unless the user actually saves.
-pub fn compose_new_entry(path: &Path) -> Result<()> {
-    storage::with_exclusive_lock(path, || compose_locked(path))
+/// `tags_flag` is `-t/--tags`'s raw value, if given -- its normalized
+/// tags line is pre-seeded at the end of the new entry, same as the
+/// non-editor append path (§2.1).
+pub fn compose_new_entry(path: &Path, tags_flag: Option<&str>) -> Result<()> {
+    let config = crate::config::load()?;
+    storage::with_exclusive_lock(path, || compose_locked(path, tags_flag, &config))
 }
 
-fn compose_locked(path: &Path) -> Result<()> {
+fn compose_locked(path: &Path, tags_flag: Option<&str>, config: &Config) -> Result<()> {
     let existing = storage::read_contents(path)?;
     let timestamp_line = format!("[{}]", Local::now().format(TIMESTAMP_FMT));
-    let seed = format!("{existing}{timestamp_line}");
+    let tags_line = tags_flag.and_then(entry::tags_line_from_flag);
+    let (seed, cursor_line) = seed_buffer(&existing, &timestamp_line, tags_line.as_deref());
 
     let parent = path
         .parent()
@@ -35,9 +41,17 @@ fn compose_locked(path: &Path) -> Result<()> {
 
     let before_mtime = mtime_of(temp.path())?;
 
-    let (program, args) = parse_editor_command(env::var("EDITOR").ok().as_deref())?;
+    let (program, base_args) = parse_editor_command(env::var("EDITOR").ok().as_deref())?;
+    let cursor_args = cursor_positioning_args(config, cursor_line)?;
+    // Cursor-positioning args go first, ahead of anything else in
+    // $EDITOR: vim/vim-likes run `+cmd`/`-c cmd` arguments in the order
+    // given, so if $EDITOR itself carries extra `-c` commands (e.g. for
+    // scripting), those must run *after* the cursor has been moved, not
+    // before -- otherwise they'd act on whatever line the editor lands
+    // on by default instead of the seeded blank line.
     let status = Command::new(&program)
-        .args(&args)
+        .args(&cursor_args)
+        .args(&base_args)
         .arg(temp.path())
         .status()
         .with_context(|| format!("failed to launch editor `{program}`"))?;
@@ -66,6 +80,20 @@ fn compose_locked(path: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Builds the temp buffer's seed content and the 1-indexed line number
+/// where the cursor should land: the blank line right after the new
+/// timestamp, and before any `-t/--tags` line, so the user's cursor
+/// starts on the line where they should begin typing the body.
+fn seed_buffer(existing: &str, timestamp_line: &str, tags_line: Option<&str>) -> (String, usize) {
+    let mut seed = format!("{existing}{timestamp_line}\n");
+    let cursor_line = seed.matches('\n').count() + 1;
+    seed.push('\n');
+    if let Some(tags) = tags_line {
+        seed.push_str(tags);
+    }
+    (seed, cursor_line)
+}
+
 fn mtime_of(path: &Path) -> Result<std::time::SystemTime> {
     fs::metadata(path)
         .and_then(|m| m.modified())
@@ -73,12 +101,12 @@ fn mtime_of(path: &Path) -> Result<std::time::SystemTime> {
 }
 
 /// Finalizes the saved buffer before it's persisted: applies the same
-/// trailing-tag-hoisting (§2.1) and blank-line normalization (§2) to the
-/// newly-composed entry that the CLI append path applies, so a tag typed
-/// at the end of the body in the editor is just as searchable as one
-/// passed on the command line. Everything before that entry is left
-/// exactly as the user wrote it -- the tool only reformats what it
-/// itself just seeded, not entries the user happened to pass through.
+/// blank-line normalization (§2) to the newly-composed entry that the
+/// CLI append path applies. Tags typed inline in the editor need no
+/// special handling -- they're just body text, searchable wherever they
+/// land (§2.1). Everything before that entry is left exactly as the user
+/// wrote it -- the tool only reformats what it itself just seeded, not
+/// entries the user happened to pass through.
 fn finalize_buffer(text: &str) -> String {
     match Entry::last_entry_start(text) {
         Some(offset) => {
@@ -87,14 +115,11 @@ fn finalize_buffer(text: &str) -> String {
             // successfully as headers, so Entry::parse here can't fail.
             let new_entry = Entry::parse(&text[offset..])
                 .expect("last_entry_start guarantees a parseable header line");
-            let (body, inline_tags) = entry::extract_trailing_tags(&new_entry.body);
-            let tags = entry::merge_tags(new_entry.tags, inline_tags);
-            let finalized = Entry::new(new_entry.timestamp, tags, body);
-            format!("{prefix}{}", finalized.render())
+            format!("{prefix}{}", new_entry.render())
         }
         // The user deleted every header line (including the one we
-        // seeded) -- there's no entry structure left to hoist tags into,
-        // so just normalize the file's trailing blank lines as a whole.
+        // seeded) -- there's no entry structure left, so just normalize
+        // the file's trailing blank lines as a whole.
         None => {
             let trimmed = normalize_trailing_blank_lines(text);
             if trimmed.is_empty() {
@@ -104,6 +129,20 @@ fn finalize_buffer(text: &str) -> String {
             }
         }
     }
+}
+
+/// Builds the extra argv entries that position the editor's cursor,
+/// from the `editor.args` template in the config file (see `config.rs`).
+/// There's no flag that works across every editor (vi/vim/nano/emacs use
+/// `+N`; GUI editors vary), so this is opt-in: with no config, there are
+/// no extra args and the cursor lands wherever the editor defaults to.
+fn cursor_positioning_args(config: &Config, cursor_line: usize) -> Result<Vec<String>> {
+    let Some(template) = &config.editor.args else {
+        return Ok(Vec::new());
+    };
+    let filled = template.replace("{line}", &cursor_line.to_string());
+    shell_words::split(&filled)
+        .with_context(|| format!("failed to parse editor.args from config: {template:?}"))
 }
 
 /// Parses `$EDITOR` (falling back to `vi` if unset, per §5) into a
@@ -124,6 +163,61 @@ fn parse_editor_command(editor_env: Option<&str>) -> Result<(String, Vec<String>
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::EditorConfig;
+
+    #[test]
+    fn seed_buffer_positions_cursor_on_the_blank_line_after_the_timestamp() {
+        let (seed, cursor_line) = seed_buffer("", "[2026-07-28.14:03:00]", None);
+        assert_eq!(seed, "[2026-07-28.14:03:00]\n\n");
+        assert_eq!(cursor_line, 2);
+    }
+
+    #[test]
+    fn seed_buffer_accounts_for_existing_content() {
+        let existing = "[2026-01-01.00:00:00]\nold\n\n"; // 3 lines
+        let (seed, cursor_line) = seed_buffer(existing, "[2026-07-28.14:03:00]", None);
+        assert_eq!(
+            seed,
+            "[2026-01-01.00:00:00]\nold\n\n[2026-07-28.14:03:00]\n\n"
+        );
+        assert_eq!(cursor_line, 5);
+    }
+
+    #[test]
+    fn seed_buffer_pre_seeds_the_tags_line_after_the_cursor_line() {
+        let (seed, cursor_line) = seed_buffer("", "[2026-07-28.14:03:00]", Some("@bp @health"));
+        assert_eq!(seed, "[2026-07-28.14:03:00]\n\n@bp @health");
+        assert_eq!(cursor_line, 2);
+    }
+
+    #[test]
+    fn cursor_positioning_args_is_empty_with_no_config() {
+        let config = Config::default();
+        assert!(cursor_positioning_args(&config, 5).unwrap().is_empty());
+    }
+
+    #[test]
+    fn cursor_positioning_args_substitutes_the_line_placeholder() {
+        let config = Config {
+            editor: EditorConfig {
+                args: Some("+{line}".to_string()),
+            },
+        };
+        assert_eq!(cursor_positioning_args(&config, 5).unwrap(), vec!["+5"]);
+    }
+
+    #[test]
+    fn cursor_positioning_args_splits_multiple_shell_words() {
+        let config = Config {
+            editor: EditorConfig {
+                args: Some("+{line} -c startinsert".to_string()),
+            },
+        };
+        assert_eq!(
+            cursor_positioning_args(&config, 3).unwrap(),
+            vec!["+3", "-c", "startinsert"]
+        );
+    }
 
     #[test]
     fn defaults_to_vi_when_editor_unset() {
@@ -163,21 +257,21 @@ mod tests {
     }
 
     #[test]
-    fn finalize_buffer_hoists_trailing_body_tags_onto_the_header() {
+    fn finalize_buffer_leaves_inline_tags_in_the_body_untouched() {
         let out = finalize_buffer("[2026-07-28.14:03:00]\nsome text @demo @another");
-        assert_eq!(out, "[2026-07-28.14:03:00] @demo @another\nsome text\n\n");
+        assert_eq!(out, "[2026-07-28.14:03:00]\nsome text @demo @another\n\n");
     }
 
     #[test]
     fn finalize_buffer_leaves_earlier_entries_untouched() {
         let out = finalize_buffer(
-            "[2026-01-01.00:00:00] @old\nold body @looks-like-a-tag-but-isnt-trailing extra\n\n\
+            "[2026-01-01.00:00:00]\nold body @old-tag\n\n\
              [2026-07-28.14:03:00]\nnew body @demo",
         );
         assert_eq!(
             out,
-            "[2026-01-01.00:00:00] @old\nold body @looks-like-a-tag-but-isnt-trailing extra\n\n\
-             [2026-07-28.14:03:00] @demo\nnew body\n\n"
+            "[2026-01-01.00:00:00]\nold body @old-tag\n\n\
+             [2026-07-28.14:03:00]\nnew body @demo\n\n"
         );
     }
 

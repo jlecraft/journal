@@ -3,7 +3,9 @@ use std::fs;
 
 fn cmd() -> Command {
     let mut cmd = Command::cargo_bin("journal").unwrap();
-    cmd.env_remove("JOURNAL_FILE").env_remove("XDG_DATA_HOME");
+    cmd.env_remove("JOURNAL_FILE")
+        .env_remove("XDG_DATA_HOME")
+        .env_remove("XDG_CONFIG_HOME");
     cmd
 }
 
@@ -21,9 +23,9 @@ fn dash_reads_entry_text_from_stdin() {
         .success();
 
     let contents = fs::read_to_string(&path).unwrap();
-    assert!(contents.contains("@bp @health"));
-    assert!(contents.contains("124/80/55"));
-    assert!(!contents.contains("124/80/55 @bp")); // tags still hoisted off the body
+    // Piped text is treated the same as text passed as an argument: tags
+    // stay exactly where they were typed, no hoisting.
+    assert!(contents.contains("]\n124/80/55 @bp @health\n\n"));
 }
 
 #[test]
@@ -41,9 +43,7 @@ fn dash_stdin_combines_with_dash_t_flag() {
         .success();
 
     let contents = fs::read_to_string(&path).unwrap();
-    assert!(contents.contains("@inline"));
-    assert!(contents.contains("@fromflag"));
-    assert!(contents.contains("piped body"));
+    assert!(contents.contains("piped body @inline\n@fromflag\n\n"));
 }
 
 #[test]

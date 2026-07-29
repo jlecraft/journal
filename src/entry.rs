@@ -1,38 +1,48 @@
 use chrono::{Local, NaiveDateTime};
-use std::collections::HashSet;
 
 /// `strftime`/`strptime` pattern matching the `[YYYY-MM-DD.HH:MM:SS]` format from §2.
 pub const TIMESTAMP_FMT: &str = "%Y-%m-%d.%H:%M:%S";
 
+/// An entry's timestamp line is always on its own line, with nothing
+/// else on it (§2). Tags are no longer a separate structured field --
+/// they're just `@word` tokens that happen to appear somewhere in the
+/// body, whether typed inline by the user or appended as their own line
+/// by `-t/--tags` (§2.1). `Entry::tags` recovers them on demand by
+/// scanning the body, rather than the tool tracking them separately.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Entry {
     pub timestamp: NaiveDateTime,
-    pub tags: Vec<String>,
     pub body: String,
 }
 
 impl Entry {
-    pub fn new(timestamp: NaiveDateTime, tags: Vec<String>, body: impl Into<String>) -> Self {
+    pub fn new(timestamp: NaiveDateTime, body: impl Into<String>) -> Self {
         Entry {
             timestamp,
-            tags,
             body: normalize_trailing_blank_lines(&body.into()),
         }
     }
 
-    pub fn now(tags: Vec<String>, body: impl Into<String>) -> Self {
-        Self::new(Local::now().naive_local(), tags, body)
+    pub fn now(body: impl Into<String>) -> Self {
+        Self::new(Local::now().naive_local(), body)
     }
 
-    /// Renders the on-disk representation: header line, normalized body,
-    /// and the single trailing blank line that terminates every entry (§2).
+    /// Every `@tag` token found anywhere in the body, in the order it
+    /// appears. A token counts as a tag purely by its `@\S+` shape (§2.1)
+    /// -- there's no separate storage to consult.
+    pub fn tags(&self) -> Vec<String> {
+        self.body
+            .split_whitespace()
+            .filter(|t| is_tag_token(t))
+            .map(|t| t.to_string())
+            .collect()
+    }
+
+    /// Renders the on-disk representation: the timestamp alone on its
+    /// own line, the body, and the single trailing blank line that
+    /// terminates every entry (§2).
     pub fn render(&self) -> String {
-        let mut out = format!("[{}]", self.timestamp.format(TIMESTAMP_FMT));
-        for tag in &self.tags {
-            out.push(' ');
-            out.push_str(tag);
-        }
-        out.push('\n');
+        let mut out = format!("[{}]\n", self.timestamp.format(TIMESTAMP_FMT));
         if !self.body.is_empty() {
             out.push_str(&self.body);
             out.push('\n');
@@ -43,14 +53,14 @@ impl Entry {
 
     /// Parses a single entry block: a header line followed by its body
     /// lines (a trailing terminator blank line, if present, is trimmed).
-    /// Any non-tag text found on the header line itself (e.g. from a
-    /// hand-edit, or an editor session where body text landed on the
-    /// timestamp line by mistake) is folded into the body rather than
-    /// discarded -- parsing must never silently drop file content.
+    /// Any text found on the header line itself after the timestamp --
+    /// which shouldn't normally be there, but can appear from a hand-edit
+    /// or an older-format entry -- is folded into the body rather than
+    /// discarded: parsing must never silently drop file content.
     pub fn parse(raw: &str) -> Option<Entry> {
         let mut lines = raw.lines();
         let header = lines.next()?;
-        let (timestamp, tags, header_overflow) = parse_header(header)?;
+        let (timestamp, header_overflow) = parse_header(header)?;
         let rest = lines.collect::<Vec<_>>().join("\n");
         let body = match header_overflow {
             Some(overflow) if rest.is_empty() => overflow,
@@ -59,7 +69,6 @@ impl Entry {
         };
         Some(Entry {
             timestamp,
-            tags,
             body: normalize_trailing_blank_lines(&body),
         })
     }
@@ -103,96 +112,34 @@ impl Entry {
     }
 }
 
-/// Parses a header line into `(timestamp, tags, header_overflow)`.
-/// `tags` is the leading contiguous run of `@tag` tokens after the
-/// timestamp, matching the canonical on-disk format (§2). Anything from
-/// the first non-tag token onward -- which shouldn't normally be there,
-/// but can appear from a hand-edit or a stray editor keystroke -- is
-/// returned as `header_overflow` rather than silently dropped, so the
-/// caller can fold it into the body instead of losing it.
-fn parse_header(line: &str) -> Option<(NaiveDateTime, Vec<String>, Option<String>)> {
+/// Parses a header line into `(timestamp, header_overflow)`. The
+/// timestamp line is always alone (§2); `header_overflow` is whatever
+/// text (if any) follows the closing `]` on that same line -- not
+/// expected in files this tool writes, but preserved rather than dropped
+/// if found (e.g. a hand-edit, or a file from before this format change).
+fn parse_header(line: &str) -> Option<(NaiveDateTime, Option<String>)> {
     let rest = line.strip_prefix('[')?;
     let (ts_str, rest) = rest.split_once(']')?;
     let timestamp = NaiveDateTime::parse_from_str(ts_str, TIMESTAMP_FMT).ok()?;
-
-    let mut tokens = rest.split_whitespace();
-    let mut tags = Vec::new();
-    let mut overflow_tokens = Vec::new();
-    for tok in tokens.by_ref() {
-        if is_tag_token(tok) {
-            tags.push(tok.to_string());
-        } else {
-            overflow_tokens.push(tok);
-            break;
-        }
-    }
-    overflow_tokens.extend(tokens);
-    let overflow = (!overflow_tokens.is_empty()).then(|| overflow_tokens.join(" "));
-
-    Some((timestamp, tags, overflow))
+    let overflow = rest.trim();
+    Some((timestamp, (!overflow.is_empty()).then(|| overflow.to_string())))
 }
 
 fn is_tag_token(token: &str) -> bool {
     token.starts_with('@') && token.len() > 1
 }
 
-/// Parses `-t/--tags` flag content (§2.1) into individual `@tag` tokens,
-/// ignoring anything in the string that isn't a well-formed tag.
-pub fn parse_tag_flag(s: &str) -> Vec<String> {
-    s.split_whitespace()
-        .filter(|t| is_tag_token(t))
-        .map(|t| t.to_string())
-        .collect()
-}
-
-/// Strips a contiguous run of trailing `@tag` tokens from `text` (§2.1) and
-/// returns `(remaining_body, extracted_tags)`. Only tokens preceded by
-/// whitespace and unbroken through to the end of the text count; a single
-/// non-tag token anywhere in the trailing run stops the scan.
-pub fn extract_trailing_tags(text: &str) -> (String, Vec<String>) {
-    let mut tokens: Vec<(usize, usize)> = Vec::new();
-    let mut start: Option<usize> = None;
-    for (i, c) in text.char_indices() {
-        if c.is_whitespace() {
-            if let Some(s) = start.take() {
-                tokens.push((s, i));
-            }
-        } else if start.is_none() {
-            start = Some(i);
-        }
-    }
-    if let Some(s) = start {
-        tokens.push((s, text.len()));
-    }
-
-    let tag_count = tokens
-        .iter()
-        .rev()
-        .take_while(|&&(s, e)| is_tag_token(&text[s..e]))
-        .count();
-
-    if tag_count == 0 {
-        return (text.to_string(), Vec::new());
-    }
-
-    let split_idx = tokens.len() - tag_count;
-    let tags: Vec<String> = tokens[split_idx..]
-        .iter()
-        .map(|&(s, e)| text[s..e].to_string())
+/// Builds the tags line appended by `-t/--tags` (§2.1): splits `s` on
+/// whitespace and prefixes any bare word with `@`, so `-t "beer @store"`
+/// becomes `@beer @store`. Returns `None` if `s` has no tokens at all
+/// (e.g. an empty or whitespace-only flag value), since then there's no
+/// line to add.
+pub fn tags_line_from_flag(s: &str) -> Option<String> {
+    let tags: Vec<String> = s
+        .split_whitespace()
+        .map(|tok| if tok.starts_with('@') { tok.to_string() } else { format!("@{tok}") })
         .collect();
-    let body_end = if split_idx == 0 { 0 } else { tokens[split_idx - 1].1 };
-    (text[..body_end].to_string(), tags)
-}
-
-/// Combines inline-extracted tags with `-t` flag tags, de-duplicating on
-/// exact case-sensitive match while keeping first-seen order (§2.1).
-pub fn merge_tags(inline: Vec<String>, flag: Vec<String>) -> Vec<String> {
-    let mut seen = HashSet::new();
-    inline
-        .into_iter()
-        .chain(flag)
-        .filter(|t| seen.insert(t.clone()))
-        .collect()
+    (!tags.is_empty()).then(|| tags.join(" "))
 }
 
 /// Trims trailing blank (or whitespace-only) lines from `body`, per the
@@ -219,111 +166,91 @@ mod tests {
     }
 
     #[test]
-    fn renders_header_with_tags_and_body() {
-        let e = Entry::new(
-            ts(2026, 7, 28, 14, 3, 0),
-            vec!["@bp".into(), "@health".into()],
-            "124/80/55",
+    fn renders_timestamp_alone_on_its_own_line() {
+        let e = Entry::new(ts(2026, 7, 28, 14, 3, 0), "124/80/55 @bp @health");
+        assert_eq!(
+            e.render(),
+            "[2026-07-28.14:03:00]\n124/80/55 @bp @health\n\n"
         );
-        assert_eq!(e.render(), "[2026-07-28.14:03:00] @bp @health\n124/80/55\n\n");
     }
 
     #[test]
-    fn renders_header_with_no_tags() {
-        let e = Entry::new(ts(2026, 7, 28, 14, 3, 0), vec![], "no tags here");
-        assert_eq!(e.render(), "[2026-07-28.14:03:00]\nno tags here\n\n");
+    fn renders_header_with_no_body() {
+        let e = Entry::new(ts(2026, 7, 28, 14, 3, 0), "");
+        assert_eq!(e.render(), "[2026-07-28.14:03:00]\n\n");
     }
 
     #[test]
     fn collapses_trailing_blank_lines_to_one() {
-        let e = Entry::new(ts(2026, 7, 28, 14, 3, 0), vec![], "line1\nline2\n\n\n\n");
+        let e = Entry::new(ts(2026, 7, 28, 14, 3, 0), "line1\nline2\n\n\n\n");
         assert_eq!(e.render(), "[2026-07-28.14:03:00]\nline1\nline2\n\n");
     }
 
     #[test]
     fn appends_blank_line_when_none_present() {
-        let e = Entry::new(ts(2026, 7, 28, 14, 3, 0), vec![], "just one line");
+        let e = Entry::new(ts(2026, 7, 28, 14, 3, 0), "just one line");
         assert_eq!(e.render(), "[2026-07-28.14:03:00]\njust one line\n\n");
     }
 
     #[test]
-    fn extracts_trailing_inline_tags() {
-        let (body, tags) = extract_trailing_tags("124/80/55 @bp @health");
-        assert_eq!(body, "124/80/55");
-        assert_eq!(tags, vec!["@bp", "@health"]);
-    }
-
-    #[test]
-    fn leaves_non_trailing_at_tokens_in_body() {
-        // An @-token that isn't part of the trailing run stays in the body.
-        let (body, tags) = extract_trailing_tags("emailed foo@bar.com about it @followup");
-        assert_eq!(body, "emailed foo@bar.com about it");
-        assert_eq!(tags, vec!["@followup"]);
-    }
-
-    #[test]
-    fn no_trailing_tags_leaves_text_untouched() {
-        let (body, tags) = extract_trailing_tags("just a plain entry");
-        assert_eq!(body, "just a plain entry");
-        assert!(tags.is_empty());
-    }
-
-    #[test]
-    fn all_tags_no_body() {
-        let (body, tags) = extract_trailing_tags("@bp @health");
-        assert_eq!(body, "");
-        assert_eq!(tags, vec!["@bp", "@health"]);
-    }
-
-    #[test]
-    fn parses_tag_flag_value() {
-        assert_eq!(parse_tag_flag("@bp @health"), vec!["@bp", "@health"]);
-    }
-
-    #[test]
-    fn merges_and_dedupes_case_sensitive() {
-        let merged = merge_tags(
-            vec!["@bp".into(), "@health".into()],
-            vec!["@health".into(), "@Health".into(), "@bp".into()],
+    fn tags_are_recovered_from_anywhere_in_the_body() {
+        let e = Entry::new(
+            ts(2026, 7, 28, 14, 3, 0),
+            "my @blood_pressure was 117/75/50",
         );
-        // First-seen order wins; "@Health" survives as distinct from "@health".
-        assert_eq!(merged, vec!["@bp", "@health", "@Health"]);
+        assert_eq!(e.tags(), vec!["@blood_pressure"]);
+    }
+
+    #[test]
+    fn tags_line_appended_by_dash_t_is_also_recovered() {
+        let e = Entry::new(ts(2026, 7, 28, 14, 3, 0), "124/80/55\n@bp @health");
+        assert_eq!(e.tags(), vec!["@bp", "@health"]);
+    }
+
+    #[test]
+    fn entry_with_no_at_tokens_has_no_tags() {
+        let e = Entry::new(ts(2026, 7, 28, 14, 3, 0), "just plain text");
+        assert!(e.tags().is_empty());
+    }
+
+    #[test]
+    fn tags_line_from_flag_prefixes_bare_words() {
+        assert_eq!(
+            tags_line_from_flag("beer @store"),
+            Some("@beer @store".to_string())
+        );
+    }
+
+    #[test]
+    fn tags_line_from_flag_leaves_already_prefixed_tags_alone() {
+        assert_eq!(
+            tags_line_from_flag("@bp @health"),
+            Some("@bp @health".to_string())
+        );
+    }
+
+    #[test]
+    fn tags_line_from_flag_is_none_for_blank_input() {
+        assert_eq!(tags_line_from_flag(""), None);
+        assert_eq!(tags_line_from_flag("   "), None);
     }
 
     #[test]
     fn round_trips_through_render_and_parse() {
-        let e = Entry::new(
-            ts(2026, 7, 28, 14, 3, 0),
-            vec!["@bp".into()],
-            "124/80/55",
-        );
+        let e = Entry::new(ts(2026, 7, 28, 14, 3, 0), "124/80/55 @bp");
         let parsed = Entry::parse(e.render().trim_end_matches('\n')).unwrap();
         assert_eq!(parsed.timestamp, e.timestamp);
-        assert_eq!(parsed.tags, e.tags);
         assert_eq!(parsed.body, e.body);
     }
 
     #[test]
-    fn stray_non_tag_text_on_the_header_line_is_preserved_in_the_body() {
-        // The canonical format only ever puts @tags after the timestamp
-        // (§2), but a hand-edit or a slipped keystroke could leave plain
-        // text there instead. Parsing must fold it into the body, not
-        // silently drop it -- search/editor mode both round-trip through
-        // parse+render, so any discarded text here would be permanently
-        // lost the next time the file is touched.
+    fn stray_text_on_the_header_line_is_preserved_in_the_body() {
+        // The canonical format only ever puts the timestamp on the
+        // header line (§2), but a hand-edit -- or a file from before this
+        // format existed -- could leave text there instead. Parsing must
+        // fold it into the body, not silently drop it.
         let parsed = Entry::parse("[2026-07-28.14:03:00] oops no newline before this").unwrap();
-        assert!(parsed.tags.is_empty());
         assert_eq!(parsed.body, "oops no newline before this");
-    }
-
-    #[test]
-    fn tags_before_stray_text_on_header_line_are_still_recognized() {
-        let parsed = Entry::parse("[2026-07-28.14:03:00] @bp stray text @looks-like-a-tag").unwrap();
-        assert_eq!(parsed.tags, vec!["@bp"]);
-        // Once a non-tag token is hit, everything after it -- even a
-        // later @-token -- is body overflow, not a second tag: the tag
-        // run must be contiguous, matching the CLI's own extraction rule.
-        assert_eq!(parsed.body, "stray text @looks-like-a-tag");
     }
 
     #[test]
@@ -333,13 +260,21 @@ mod tests {
     }
 
     #[test]
+    fn old_format_header_tags_are_folded_into_the_body() {
+        // A file written before this format change may still have tags
+        // on the header line; they're preserved as body text (still
+        // searchable as tags) rather than dropped.
+        let parsed = Entry::parse("[2026-07-28.14:03:00] @bp @health\n124/80/55").unwrap();
+        assert_eq!(parsed.body, "@bp @health\n124/80/55");
+        assert_eq!(parsed.tags(), vec!["@bp", "@health"]);
+    }
+
+    #[test]
     fn parses_multiple_entries_from_a_journal_file() {
-        let file = "[2026-07-28.14:03:00] @bp\n124/80/55\n\n[2026-07-29.09:00:00]\nslept fine\n\n";
+        let file = "[2026-07-28.14:03:00]\n124/80/55 @bp\n\n[2026-07-29.09:00:00]\nslept fine\n\n";
         let entries = Entry::parse_all(file);
         assert_eq!(entries.len(), 2);
-        assert_eq!(entries[0].tags, vec!["@bp"]);
-        assert_eq!(entries[0].body, "124/80/55");
-        assert_eq!(entries[1].tags, Vec::<String>::new());
+        assert_eq!(entries[0].body, "124/80/55 @bp");
         assert_eq!(entries[1].body, "slept fine");
     }
 

@@ -41,7 +41,7 @@ fn run(cli: Cli) -> Result<i32> {
             Ok(0)
         }
         None => {
-            editor::compose_new_entry(&path)?;
+            editor::compose_new_entry(&path, cli.tags.as_deref())?;
             Ok(0)
         }
     }
@@ -55,11 +55,19 @@ fn read_stdin_text() -> Result<String> {
     Ok(text)
 }
 
+/// Appends a new entry. `-t/--tags` (if given) is normalized into a tags
+/// line -- bare words get an `@` prefix -- and concatenated onto its own
+/// line at the end of the entry text (§2.1); any `@tag` already typed
+/// inline in `text` is left exactly where it is, since a token is
+/// recognized as a tag by its shape wherever it appears, not by position.
 fn append(path: &Path, text: &str, tags_flag: Option<&str>) -> Result<()> {
-    let (body, inline_tags) = entry::extract_trailing_tags(text);
-    let flag_tags = tags_flag.map(entry::parse_tag_flag).unwrap_or_default();
-    let tags = entry::merge_tags(inline_tags, flag_tags);
-    let e = Entry::now(tags, body);
+    let tags_line = tags_flag.and_then(entry::tags_line_from_flag);
+    let body = match tags_line {
+        Some(line) if text.is_empty() => line,
+        Some(line) => format!("{text}\n{line}"),
+        None => text.to_string(),
+    };
+    let e = Entry::now(body);
     storage::append_entry(path, &e.render())
 }
 

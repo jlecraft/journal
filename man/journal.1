@@ -10,7 +10,7 @@ A command\-line utility for appending timestamped, taggable entries to a plain\-
 .SH OPTIONS
 .TP
 \fB\-t\fR, \fB\-\-tags\fR \fI<TAGS>\fR
-Explicit tags for this entry, e.g. "@bp @health". Combined with any trailing tags already present in TEXT and de\-duplicated
+Tags to append as their own line at the end of the entry, e.g. "bp health" or "@bp @health" \-\- bare words are automatically prefixed with @
 .TP
 \fB\-f\fR, \fB\-\-file\fR \fI<PATH>\fR
 Path to the journal file. Overrides $JOURNAL_FILE and the XDG default
@@ -31,7 +31,7 @@ Print help
 Print version
 .TP
 [\fITEXT\fR]
-Entry text to append. Trailing @tags are extracted automatically. Pass "\-" to read the entry text from stdin instead. If omitted entirely, opens $EDITOR (or vi) to compose a new entry
+Entry text to append. @tags may appear anywhere in the text and remain searchable right where you typed them. Pass "\-" to read the entry text from stdin instead. If omitted entirely, opens $EDITOR (or vi) to compose a new entry
 .SH EXTRA
 Show the last N entries with \-N, e.g. `journal \-3` prints the 3 most recent entries.
 .SH VERSION

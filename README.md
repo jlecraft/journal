@@ -9,17 +9,19 @@ Entries are stored in a flat, human-readable format, so the underlying file
 stays inspectable and editable by hand -- no database, no lock-in.
 
 ```
-[2026-07-28.14:03:00] @bp @health
-124/80/55
+[2026-07-28.14:03:00]
+124/80/55 @bp @health
 
-[2026-07-28.20:41:55] @sleep
+[2026-07-28.20:41:55]
 slept 7 hours
+@sleep
 ```
 
 ## Features
 
 - Append timestamped entries from the command line, `$EDITOR`, or stdin
-- Tag entries inline (`@tag`) or via `-t/--tags`, merged and de-duplicated
+- Tag entries by typing `@tag` anywhere in the text, or via `-t/--tags`
+  (bare words are auto-prefixed with `@` and appended as their own line)
 - Search by tag (exact match) or keyword (case-insensitive substring), with
   AND/OR term combining and a result limit
 - Show the last N entries with `-N` (e.g. `journal -3`)
@@ -72,12 +74,14 @@ Regenerate it after changing `src/cli.rs` with `cargo run --example man`.
 journal "124/80/55 @bp @health"
 ```
 
-Trailing `@tag` tokens at the end of the entry text are extracted
-automatically and hoisted onto the timestamp line. Tags can also be given
-explicitly and combined with inline tags:
+`@tag` tokens can appear anywhere in the text and stay right where you typed
+them -- the timestamp line is always alone on its own line. Tags can also be
+given via `-t/--tags`, which appends them as their own line at the end of
+the entry; bare words are automatically prefixed with `@`:
 
 ```sh
-journal -t "@sleep" "slept 7 hours"
+journal -t "sleep" "slept 7 hours"      # appends "@sleep" as its own line
+journal -t "beer @store" "grabbed a six-pack"  # appends "@beer @store"
 ```
 
 Pipe entry text in instead of passing it as an argument:
@@ -87,9 +91,22 @@ echo "back from a walk @exercise" | journal -
 ```
 
 Run `journal` with no arguments to open the entry in `$EDITOR` (falling back
-to `vi`), with a new timestamp line pre-inserted. The real journal file is
-only touched if you actually save -- aborting the editor (`:q!`, or exiting
-without writing) leaves it untouched.
+to `vi`), with a new timestamp line pre-inserted and the cursor left on the
+blank line right after it, ready to type the body. `-t/--tags` works here
+too -- its tags line is pre-seeded at the end of the entry, after the blank
+line the cursor starts on:
+
+```sh
+journal -t "sleep"
+```
+
+The real journal file is only touched if you actually save -- aborting the
+editor (`:q!`, or exiting without writing) leaves it untouched.
+
+Positioning the cursor requires an editor-specific command-line flag (vi/vim
+and friends use `+N`; GUI editors vary), so there's no single default that
+works everywhere. See [Editor configuration](#editor-configuration) below to
+set it up for your `$EDITOR`.
 
 ### Search
 
@@ -103,8 +120,11 @@ journal -s "th" --limit 5     # cap the number of results
 
 Non-tag search terms are case-insensitive substring matches -- a search for
 `"th"` matches inside `"weather"` or `"month"` too. This is broad by design.
-`@`-prefixed terms are the exception: they're matched only against an
-entry's tags, and require a full-word match (`@bp` won't match `@bph`).
+`@`-prefixed terms are the exception: they require a full-word match against
+a `@tag` token found anywhere in the entry (`@bp` won't match `@bph`). A
+bare word also finds its `@`-prefixed form via ordinary substring matching --
+`journal -s "blood_pressure"` finds `@blood_pressure` the same as
+`journal -s "@blood_pressure"` does.
 
 ### Show the last N entries
 
@@ -124,6 +144,46 @@ Resolved in this order:
 3. `$XDG_DATA_HOME/journal/journal.txt`, falling back to
    `~/.local/share/journal/journal.txt`
 
+### Editor configuration
+
+`journal`'s no-argument mode seeds a blank line for the cursor to land on,
+but *moving* the cursor there requires a command-line flag specific to your
+`$EDITOR` -- there's no flag that works across every editor, so it's opt-in
+via a config file at `$XDG_CONFIG_HOME/journal/config.toml` (falling back to
+`~/.config/journal/config.toml`):
+
+```toml
+# ~/.config/journal/config.toml
+[editor]
+args = "+{line}"
+```
+
+`args` is parsed with the same shell-word splitting as `$EDITOR` itself
+(quoting works the same way), and `{line}` is replaced with the 1-indexed
+line number of the blank line where you should start typing. The resulting
+arguments are inserted right before the file path, ahead of anything else in
+`$EDITOR`.
+
+**vim/vi/nvim** understand `+N` as "open with the cursor on line N", which is
+all you need:
+
+```toml
+[editor]
+args = "+{line}"
+```
+
+If you'd rather land straight in insert mode instead of normal mode, chain a
+`-c` command (vim runs `+`/`-c` arguments in the order given):
+
+```toml
+[editor]
+args = "+{line} -c startinsert"
+```
+
+**nano** uses the same `+LINE` convention, so `args = "+{line}"` works there
+too. Other editors vary -- e.g. GUI editors that take a `file:line` argument
+instead -- so check your editor's documentation for its equivalent flag.
+
 ## Environment variables
 
 | Variable         | Purpose                                             |
@@ -131,6 +191,7 @@ Resolved in this order:
 | `EDITOR`          | Editor launched by no-argument invocation (falls back to `vi`) |
 | `JOURNAL_FILE`     | Journal file path (see resolution order above)       |
 | `XDG_DATA_HOME`    | Base directory for the default journal file location |
+| `XDG_CONFIG_HOME`  | Base directory for the config file (see Editor configuration) |
 
 ## Exit codes
 
@@ -143,14 +204,17 @@ Resolved in this order:
 ## Entry format
 
 ```
-[YYYY-MM-DD.HH:MM:SS] @tag1 @tag2
+[YYYY-MM-DD.HH:MM:SS]
 Entry body, line 1
 Entry body, line 2 (optional)
+@tag1 @tag2 (optional, only present if -t/--tags was used)
 
 ```
 
-Every entry ends with exactly one blank line, which the tool maintains
-automatically regardless of what you type. See
+The timestamp is always alone on its own line. `@tag` tokens are otherwise
+just ordinary text -- they can appear anywhere in the body, wherever they
+were typed. Every entry ends with exactly one blank line, which the tool
+maintains automatically regardless of what you type. See
 [`journal-cli-spec.md`](journal-cli-spec.md) for the full design spec and
 the rationale behind each behavior.
 

@@ -10,9 +10,10 @@ use clap::Parser;
     after_help = "Show the last N entries with -N, e.g. `journal -3` prints the 3 most recent entries."
 )]
 pub struct Cli {
-    /// Entry text to append. Trailing @tags are extracted automatically.
-    /// Pass "-" to read the entry text from stdin instead. If omitted
-    /// entirely, opens $EDITOR (or vi) to compose a new entry.
+    /// Entry text to append. @tags may appear anywhere in the text and
+    /// remain searchable right where you typed them. Pass "-" to read
+    /// the entry text from stdin instead. If omitted entirely, opens
+    /// $EDITOR (or vi) to compose a new entry.
     #[arg(conflicts_with = "search")]
     pub text: Option<String>,
 
@@ -23,8 +24,9 @@ pub struct Cli {
     #[arg(skip)]
     pub last: Option<usize>,
 
-    /// Explicit tags for this entry, e.g. "@bp @health". Combined with any
-    /// trailing tags already present in TEXT and de-duplicated.
+    /// Tags to append as their own line at the end of the entry, e.g.
+    /// "bp health" or "@bp @health" -- bare words are automatically
+    /// prefixed with @.
     #[arg(short = 't', long = "tags", value_name = "TAGS", conflicts_with = "search")]
     pub tags: Option<String>,
 

@@ -4,12 +4,14 @@ use std::fs;
 fn cmd() -> Command {
     let mut cmd = Command::cargo_bin("journal").unwrap();
     // Isolate from the real environment/XDG default in every test.
-    cmd.env_remove("JOURNAL_FILE").env_remove("XDG_DATA_HOME");
+    cmd.env_remove("JOURNAL_FILE")
+        .env_remove("XDG_DATA_HOME")
+        .env_remove("XDG_CONFIG_HOME");
     cmd
 }
 
 #[test]
-fn appends_entry_with_inline_trailing_tags_via_dash_f() {
+fn inline_tags_stay_wherever_they_were_typed() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("journal.txt");
 
@@ -21,30 +23,29 @@ fn appends_entry_with_inline_trailing_tags_via_dash_f() {
         .success();
 
     let contents = fs::read_to_string(&path).unwrap();
-    assert!(contents.contains("@bp @health"));
-    assert!(contents.contains("124/80/55"));
-    assert!(!contents.contains("124/80/55 @bp")); // tags hoisted off the body
+    // No hoisting: the tags stay exactly where they were typed, trailing
+    // the body text on the same line, and the header line stays bare.
+    assert!(contents.starts_with("[") && contents.contains("]\n124/80/55 @bp @health\n\n"));
     assert!(contents.ends_with("\n\n"));
 }
 
 #[test]
-fn appends_entry_with_dash_t_flag_and_merges_with_inline_tags() {
+fn dash_t_appends_a_tags_line_and_prefixes_bare_words() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("journal.txt");
 
     cmd()
         .arg("-f")
         .arg(&path)
-        .args(["-t", "@bp @extra"])
-        .arg("124/80/55 @bp @health")
+        .args(["-t", "beer @store"])
+        .arg("124/80/55 @bp")
         .assert()
         .success();
 
     let contents = fs::read_to_string(&path).unwrap();
-    // @bp appears once despite being in both sources (dedup).
-    assert_eq!(contents.matches("@bp").count(), 1);
-    assert!(contents.contains("@health"));
-    assert!(contents.contains("@extra"));
+    // The -t tags land on their own line, after the body; the bare
+    // "beer" is auto-prefixed, and the inline "@bp" is untouched.
+    assert!(contents.contains("124/80/55 @bp\n@beer @store\n\n"));
 }
 
 #[test]

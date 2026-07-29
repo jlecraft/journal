@@ -29,7 +29,10 @@ fn parse_terms(query: &str) -> Vec<Term> {
 
 fn term_matches(term: &Term, entry: &Entry, haystack: &str) -> bool {
     match term {
-        Term::Tag(t) => entry.tags.iter().any(|tag| tag.to_lowercase() == *t),
+        // Tags are no longer stored separately (§2.1) -- `entry.tags()`
+        // recovers them by scanning the body for `@\S+` tokens, wherever
+        // they happen to appear.
+        Term::Tag(t) => entry.tags().iter().any(|tag| tag.to_lowercase() == *t),
         Term::Substring(s) => haystack.contains(s.as_str()),
     }
 }
@@ -72,12 +75,16 @@ mod tests {
             .unwrap()
     }
 
+    /// Builds a test entry with `tags` appended as a trailing line, the
+    /// same shape `-t/--tags` produces (§2.1). Tags aren't a separate
+    /// field anymore -- they're just `@word` tokens in the body.
     fn e(tags: &[&str], body: &str) -> Entry {
-        Entry::new(
-            ts(2026, 1, 1),
-            tags.iter().map(|s| s.to_string()).collect(),
-            body,
-        )
+        let full_body = if tags.is_empty() {
+            body.to_string()
+        } else {
+            format!("{body}\n{}", tags.join(" "))
+        };
+        Entry::new(ts(2026, 1, 1), full_body)
     }
 
     fn opts(all: bool, limit: Option<usize>) -> SearchOptions {
@@ -122,7 +129,7 @@ mod tests {
         let entries = vec![e(&["@bp"], "reading"), e(&["@bph"], "other")];
         let results = search(&entries, "@bp", &opts(false, None));
         assert_eq!(results.len(), 1);
-        assert_eq!(results[0].tags, vec!["@bp"]);
+        assert_eq!(results[0].tags(), vec!["@bp"]);
     }
 
     #[test]

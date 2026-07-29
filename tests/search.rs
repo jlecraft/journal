@@ -5,27 +5,30 @@ use tempfile::TempDir;
 
 fn cmd() -> Command {
     let mut cmd = Command::cargo_bin("journal").unwrap();
-    cmd.env_remove("JOURNAL_FILE").env_remove("XDG_DATA_HOME");
+    cmd.env_remove("JOURNAL_FILE")
+        .env_remove("XDG_DATA_HOME")
+        .env_remove("XDG_CONFIG_HOME");
     cmd
 }
 
 /// A journal file pre-populated directly (not via the CLI) so tests
 /// control exact entry content/order without depending on Milestone 3.
+/// Tags now live inline in the body rather than on the header line (§2).
 fn fixture() -> (TempDir, std::path::PathBuf) {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("journal.txt");
     fs::write(
         &path,
-        "[2026-07-01.08:00:00] @bp @health\n\
-         124/80/55\n\n\
-         [2026-07-02.09:00:00] @bph\n\
-         unrelated tag that looks similar\n\n\
+        "[2026-07-01.08:00:00]\n\
+         124/80/55 @bp @health\n\n\
+         [2026-07-02.09:00:00]\n\
+         unrelated tag that looks similar @bph\n\n\
          [2026-07-03.10:00:00]\n\
          reading about linux kernel internals\n\n\
          [2026-07-04.11:00:00]\n\
          the weather this month\n\n\
-         [2026-07-05.12:00:00] @sleep\n\
-         slept 7 hours, felt great\n\n",
+         [2026-07-05.12:00:00]\n\
+         slept 7 hours, felt great @sleep\n\n",
     )
     .unwrap();
     (dir, path)
@@ -149,7 +152,7 @@ fn matches_are_separated_by_a_blank_line() {
         .stdout
         .clone();
     let s = String::from_utf8(out).unwrap();
-    assert!(s.contains("124/80/55\n\n[2026-07-05"));
+    assert!(s.contains("124/80/55 @bp @health\n\n[2026-07-05"));
 }
 
 #[test]
@@ -163,6 +166,27 @@ fn search_and_positional_text_conflict_is_a_usage_error() {
         .assert()
         .failure()
         .code(2);
+}
+
+#[test]
+fn bare_word_and_at_prefixed_term_both_find_an_inline_tag() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("journal.txt");
+    fs::write(
+        &path,
+        "[2026-07-06.13:00:00]\nmy @blood_pressure was 117/75/50\n\n",
+    )
+    .unwrap();
+
+    for term in ["blood_pressure", "@blood_pressure"] {
+        cmd()
+            .arg("-f")
+            .arg(&path)
+            .args(["-s", term])
+            .assert()
+            .success()
+            .stdout(predicate::str::contains("117/75/50"));
+    }
 }
 
 #[test]
