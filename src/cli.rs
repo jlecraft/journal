@@ -6,7 +6,8 @@ use clap::Parser;
 #[command(name = "journal", version, about)]
 pub struct Cli {
     /// Entry text to append. Trailing @tags are extracted automatically.
-    /// If omitted, opens $EDITOR (or vi) to compose a new entry.
+    /// Pass "-" to read the entry text from stdin instead. If omitted
+    /// entirely, opens $EDITOR (or vi) to compose a new entry.
     #[arg(conflicts_with = "search")]
     pub text: Option<String>,
 

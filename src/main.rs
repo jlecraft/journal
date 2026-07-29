@@ -4,9 +4,10 @@ mod entry;
 mod search;
 mod storage;
 
+use std::io::Read;
 use std::path::Path;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::Parser;
 use cli::Cli;
 use entry::Entry;
@@ -35,6 +36,9 @@ fn run(cli: Cli) -> Result<i32> {
 
     match cli.text {
         Some(text) => {
+            // `-` means "read entry text from stdin" (§6.5), the standard
+            // Unix filter-tool convention (e.g. `echo "..." | journal -`).
+            let text = if text == "-" { read_stdin_text()? } else { text };
             append(&path, &text, cli.tags.as_deref())?;
             Ok(0)
         }
@@ -43,6 +47,14 @@ fn run(cli: Cli) -> Result<i32> {
             Ok(0)
         }
     }
+}
+
+fn read_stdin_text() -> Result<String> {
+    let mut text = String::new();
+    std::io::stdin()
+        .read_to_string(&mut text)
+        .context("failed to read entry text from stdin")?;
+    Ok(text)
 }
 
 fn append(path: &Path, text: &str, tags_flag: Option<&str>) -> Result<()> {
