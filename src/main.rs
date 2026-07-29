@@ -2,13 +2,12 @@ use std::io::Read;
 use std::path::Path;
 
 use anyhow::{Context, Result};
-use clap::Parser;
 use journal::cli::Cli;
 use journal::entry::Entry;
 use journal::{editor, entry, search, storage};
 
 fn main() {
-    let cli = Cli::parse();
+    let cli = Cli::parse_args();
     if let Err(msg) = cli.validate() {
         eprintln!("journal: {msg}");
         std::process::exit(2);
@@ -27,6 +26,10 @@ fn run(cli: Cli) -> Result<i32> {
 
     if let Some(query) = &cli.search {
         return run_search(&path, query, cli.all, cli.limit);
+    }
+
+    if let Some(n) = cli.last {
+        return run_last(&path, n);
     }
 
     match cli.text {
@@ -58,6 +61,22 @@ fn append(path: &Path, text: &str, tags_flag: Option<&str>) -> Result<()> {
     let tags = entry::merge_tags(inline_tags, flag_tags);
     let e = Entry::now(tags, body);
     storage::append_entry(path, &e.render())
+}
+
+/// Prints the last `n` entries in the journal (oldest to newest, same as
+/// `tail`), or fewer if the journal has less than `n` entries. An empty
+/// journal is not an error: nothing is printed and the exit code is 0.
+fn run_last(path: &Path, n: usize) -> Result<i32> {
+    let contents = storage::read_contents(path)?;
+    let entries = Entry::parse_all(&contents);
+    let start = entries.len().saturating_sub(n);
+
+    let mut out = String::new();
+    for e in &entries[start..] {
+        out.push_str(&e.render());
+    }
+    print!("{out}");
+    Ok(0)
 }
 
 /// Returns the process exit code: 0 if at least one entry matched, 1 if

@@ -22,6 +22,7 @@ slept 7 hours
 - Tag entries inline (`@tag`) or via `-t/--tags`, merged and de-duplicated
 - Search by tag (exact match) or keyword (case-insensitive substring), with
   AND/OR term combining and a result limit
+- Show the last N entries with `-N` (e.g. `journal -3`)
 - Journal file location resolved via `-f`, `$JOURNAL_FILE`, or the XDG data
   directory, in that order
 - Concurrency-safe: locked writes so a cron job and an interactive session
@@ -104,6 +105,15 @@ Non-tag search terms are case-insensitive substring matches -- a search for
 `"th"` matches inside `"weather"` or `"month"` too. This is broad by design.
 `@`-prefixed terms are the exception: they're matched only against an
 entry's tags, and require a full-word match (`@bp` won't match `@bph`).
+
+### Show the last N entries
+
+```sh
+journal -3
+```
+
+Prints the 3 most recent entries, oldest to newest (like `tail`). Can't be
+combined with entry text, `-t/--tags`, or `-s/--search`.
 
 ### Journal file location
 
