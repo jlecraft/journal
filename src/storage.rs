@@ -1,8 +1,10 @@
 use std::env;
 use std::fs::OpenOptions;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
+use fs2::FileExt;
 
 /// Resolves the journal file path per the precedence chain in spec §4:
 /// 1. `-f/--file` CLI argument
@@ -58,6 +60,27 @@ pub fn ensure_exists(path: &Path) -> Result<()> {
         .open(path)
         .with_context(|| format!("failed to create journal file at {}", path.display()))?;
     Ok(())
+}
+
+/// Appends `rendered` (an already-formatted `Entry::render()` string) to
+/// the journal file, creating it first if needed. Per §6.8, the write is
+/// serialized with an exclusive advisory lock (`flock`) held for the
+/// duration of the write and released on drop, and the file descriptor
+/// is opened in `O_APPEND` mode so concurrent writers (e.g. a cron job
+/// and an interactive invocation) can't interleave or clobber entries.
+pub fn append_entry(path: &Path, rendered: &str) -> Result<()> {
+    ensure_exists(path)?;
+    let mut file = OpenOptions::new()
+        .append(true)
+        .open(path)
+        .with_context(|| format!("failed to open journal file at {}", path.display()))?;
+    file.lock_exclusive()
+        .with_context(|| format!("failed to lock journal file at {}", path.display()))?;
+    let result = file
+        .write_all(rendered.as_bytes())
+        .with_context(|| format!("failed to append to journal file at {}", path.display()));
+    let _ = FileExt::unlock(&file);
+    result
 }
 
 #[cfg(test)]
@@ -132,5 +155,28 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("no-such-subdir").join("journal.txt");
         assert!(ensure_exists(&path).is_err());
+    }
+
+    #[test]
+    fn append_entry_creates_file_and_writes_content() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("journal.txt");
+        append_entry(&path, "[2026-07-28.14:03:00]\nfirst entry\n\n").unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "[2026-07-28.14:03:00]\nfirst entry\n\n"
+        );
+    }
+
+    #[test]
+    fn append_entry_appends_after_existing_content() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("journal.txt");
+        append_entry(&path, "[2026-07-28.14:03:00]\nfirst\n\n").unwrap();
+        append_entry(&path, "[2026-07-28.15:00:00]\nsecond\n\n").unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "[2026-07-28.14:03:00]\nfirst\n\n[2026-07-28.15:00:00]\nsecond\n\n"
+        );
     }
 }
