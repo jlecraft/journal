@@ -57,12 +57,16 @@ impl Entry {
 
     /// Renders an entry for display to a human (`journal -s`, `journal
     /// -N`): the same body as `render`, but with the header reformatted
-    /// as `### YYYY-MM-DD HH:MM:SS` rather than the on-disk `[...]` form.
-    /// An ATX heading, unlike a blockquote, has no lazy-continuation --
-    /// Markdown renderers (e.g. `bat`) color only this line, not the body
-    /// line that follows it.
+    /// as `### YYYY-MM-DD HH:MM:SS (N units ago)` rather than the on-disk
+    /// `[...]` form. An ATX heading, unlike a blockquote, has no
+    /// lazy-continuation -- Markdown renderers (e.g. `bat`) color only
+    /// this line, not the body line that follows it.
     pub fn display(&self) -> String {
-        let mut out = format!("### {}\n", self.timestamp.format(DISPLAY_TIMESTAMP_FMT));
+        let age = relative_time(self.timestamp, Local::now().naive_local());
+        let mut out = format!(
+            "### {} ({age})\n",
+            self.timestamp.format(DISPLAY_TIMESTAMP_FMT)
+        );
         if !self.body.is_empty() {
             out.push_str(&self.body);
             out.push('\n');
@@ -147,6 +151,34 @@ fn parse_header(line: &str) -> Option<(NaiveDateTime, Option<String>)> {
 
 fn is_tag_token(token: &str) -> bool {
     token.starts_with('@') && token.len() > 1
+}
+
+/// Renders how long ago `then` was relative to `now` as a short phrase
+/// like `1 week ago`, for the header appended by `Entry::display`. A
+/// timestamp in the future (e.g. a hand-edited or clock-skewed entry)
+/// falls back to `just now` rather than printing a negative duration.
+fn relative_time(then: NaiveDateTime, now: NaiveDateTime) -> String {
+    let secs = (now - then).num_seconds();
+    if secs < 60 {
+        return "just now".to_string();
+    }
+
+    let (n, unit) = if secs < 60 * 60 {
+        (secs / 60, "minute")
+    } else if secs < 60 * 60 * 24 {
+        (secs / (60 * 60), "hour")
+    } else if secs < 60 * 60 * 24 * 7 {
+        (secs / (60 * 60 * 24), "day")
+    } else if secs < 60 * 60 * 24 * 30 {
+        (secs / (60 * 60 * 24 * 7), "week")
+    } else if secs < 60 * 60 * 24 * 365 {
+        (secs / (60 * 60 * 24 * 30), "month")
+    } else {
+        (secs / (60 * 60 * 24 * 365), "year")
+    };
+
+    let plural = if n == 1 { "" } else { "s" };
+    format!("{n} {unit}{plural} ago")
 }
 
 /// Builds the tags line appended by `-t/--tags` (§2.1): splits `s` on
@@ -324,5 +356,41 @@ mod tests {
     #[test]
     fn last_entry_start_is_none_without_any_header_line() {
         assert_eq!(Entry::last_entry_start("just some text\nno header here"), None);
+    }
+
+    #[test]
+    fn relative_time_just_now_under_a_minute() {
+        let now = ts(2026, 7, 30, 12, 0, 30);
+        assert_eq!(relative_time(ts(2026, 7, 30, 12, 0, 0), now), "just now");
+    }
+
+    #[test]
+    fn relative_time_singular_and_plural_minutes() {
+        let now = ts(2026, 7, 30, 12, 5, 0);
+        assert_eq!(relative_time(ts(2026, 7, 30, 12, 4, 0), now), "1 minute ago");
+        assert_eq!(relative_time(ts(2026, 7, 30, 12, 0, 0), now), "5 minutes ago");
+    }
+
+    #[test]
+    fn relative_time_hours_days_weeks_months_years() {
+        let now = ts(2026, 7, 30, 12, 0, 0);
+        assert_eq!(relative_time(ts(2026, 7, 30, 10, 0, 0), now), "2 hours ago");
+        assert_eq!(relative_time(ts(2026, 7, 29, 12, 0, 0), now), "1 day ago");
+        assert_eq!(relative_time(ts(2026, 7, 23, 12, 0, 0), now), "1 week ago");
+        assert_eq!(relative_time(ts(2026, 6, 1, 12, 0, 0), now), "1 month ago");
+        assert_eq!(relative_time(ts(2024, 7, 30, 12, 0, 0), now), "2 years ago");
+    }
+
+    #[test]
+    fn relative_time_future_timestamp_falls_back_to_just_now() {
+        let now = ts(2026, 7, 30, 12, 0, 0);
+        assert_eq!(relative_time(ts(2026, 7, 30, 13, 0, 0), now), "just now");
+    }
+
+    #[test]
+    fn display_includes_relative_age_next_to_the_header() {
+        let e = Entry::new(ts(2026, 7, 23, 12, 0, 0), "slept fine");
+        assert!(e.display().starts_with("### 2026-07-23 12:00:00 ("));
+        assert!(e.display().contains("ago)"));
     }
 }
