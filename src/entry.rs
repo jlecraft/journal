@@ -57,10 +57,11 @@ impl Entry {
 
     /// Renders an entry for display to a human (`journal -s`, `journal
     /// -N`): the same body as `render`, but with the header reformatted
-    /// as `### YYYY-MM-DD HH:MM:SS (N units ago)` rather than the on-disk
-    /// `[...]` form. An ATX heading, unlike a blockquote, has no
-    /// lazy-continuation -- Markdown renderers (e.g. `bat`) color only
-    /// this line, not the body line that follows it.
+    /// as `### YYYY-MM-DD HH:MM:SS (N units ago)` -- or `(in N units)` for
+    /// a postdated entry -- rather than the on-disk `[...]` form. An ATX
+    /// heading, unlike a blockquote, has no lazy-continuation -- Markdown
+    /// renderers (e.g. `bat`) color only this line, not the body line
+    /// that follows it.
     pub fn display(&self) -> String {
         let age = relative_time(self.timestamp, Local::now().naive_local());
         let mut out = format!(
@@ -153,12 +154,15 @@ fn is_tag_token(token: &str) -> bool {
     token.starts_with('@') && token.len() > 1
 }
 
-/// Renders how long ago `then` was relative to `now` as a short phrase
-/// like `1 week ago`, for the header appended by `Entry::display`. A
-/// timestamp in the future (e.g. a hand-edited or clock-skewed entry)
-/// falls back to `just now` rather than printing a negative duration.
+/// Renders how far `then` is from `now` as a short phrase: `1 week ago`
+/// for a past timestamp, `in 1 week` for a future one -- e.g. a journal
+/// entry backdated or postdated by hand -- for the header appended by
+/// `Entry::display`. Either direction collapses to `just now` inside a
+/// one-minute window.
 fn relative_time(then: NaiveDateTime, now: NaiveDateTime) -> String {
     let secs = (now - then).num_seconds();
+    let future = secs < 0;
+    let secs = secs.abs();
     if secs < 60 {
         return "just now".to_string();
     }
@@ -178,7 +182,11 @@ fn relative_time(then: NaiveDateTime, now: NaiveDateTime) -> String {
     };
 
     let plural = if n == 1 { "" } else { "s" };
-    format!("{n} {unit}{plural} ago")
+    if future {
+        format!("in {n} {unit}{plural}")
+    } else {
+        format!("{n} {unit}{plural} ago")
+    }
 }
 
 /// Builds the tags line appended by `-t/--tags` (§2.1): splits `s` on
@@ -382,9 +390,26 @@ mod tests {
     }
 
     #[test]
-    fn relative_time_future_timestamp_falls_back_to_just_now() {
+    fn relative_time_future_timestamp_under_a_minute_is_just_now() {
         let now = ts(2026, 7, 30, 12, 0, 0);
-        assert_eq!(relative_time(ts(2026, 7, 30, 13, 0, 0), now), "just now");
+        assert_eq!(relative_time(ts(2026, 7, 30, 12, 0, 30), now), "just now");
+    }
+
+    #[test]
+    fn relative_time_future_singular_and_plural_minutes() {
+        let now = ts(2026, 7, 30, 12, 0, 0);
+        assert_eq!(relative_time(ts(2026, 7, 30, 12, 1, 0), now), "in 1 minute");
+        assert_eq!(relative_time(ts(2026, 7, 30, 12, 5, 0), now), "in 5 minutes");
+    }
+
+    #[test]
+    fn relative_time_future_hours_days_weeks_months_years() {
+        let now = ts(2026, 7, 30, 12, 0, 0);
+        assert_eq!(relative_time(ts(2026, 7, 30, 14, 0, 0), now), "in 2 hours");
+        assert_eq!(relative_time(ts(2026, 7, 31, 12, 0, 0), now), "in 1 day");
+        assert_eq!(relative_time(ts(2026, 8, 6, 12, 0, 0), now), "in 1 week");
+        assert_eq!(relative_time(ts(2026, 8, 29, 12, 0, 0), now), "in 1 month");
+        assert_eq!(relative_time(ts(2028, 7, 30, 12, 0, 0), now), "in 2 years");
     }
 
     #[test]
