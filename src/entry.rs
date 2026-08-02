@@ -154,11 +154,14 @@ fn is_tag_token(token: &str) -> bool {
     token.starts_with('@') && token.len() > 1
 }
 
-/// Renders how far `then` is from `now` as a short phrase: `1 week ago`
-/// for a past timestamp, `in 1 week` for a future one -- e.g. a journal
+/// Renders how far `then` is from `now` as a short phrase: `12 days ago`
+/// for a past timestamp, `in 12 days` for a future one -- e.g. a journal
 /// entry backdated or postdated by hand -- for the header appended by
 /// `Entry::display`. Either direction collapses to `just now` inside a
-/// one-minute window.
+/// one-minute window. Day counts are shown as-is (no week/month rounding)
+/// out to 90 days, since a raw day count is more useful than a coarser
+/// unit at that range; beyond 90 days the phrase switches to months, and
+/// beyond a year, to years.
 fn relative_time(then: NaiveDateTime, now: NaiveDateTime) -> String {
     let secs = (now - then).num_seconds();
     let future = secs < 0;
@@ -171,10 +174,8 @@ fn relative_time(then: NaiveDateTime, now: NaiveDateTime) -> String {
         (secs / 60, "minute")
     } else if secs < 60 * 60 * 24 {
         (secs / (60 * 60), "hour")
-    } else if secs < 60 * 60 * 24 * 7 {
+    } else if secs < 60 * 60 * 24 * 90 {
         (secs / (60 * 60 * 24), "day")
-    } else if secs < 60 * 60 * 24 * 30 {
-        (secs / (60 * 60 * 24 * 7), "week")
     } else if secs < 60 * 60 * 24 * 365 {
         (secs / (60 * 60 * 24 * 30), "month")
     } else {
@@ -380,12 +381,19 @@ mod tests {
     }
 
     #[test]
-    fn relative_time_hours_days_weeks_months_years() {
+    fn relative_time_hours_and_days_under_90_are_shown_as_days() {
         let now = ts(2026, 7, 30, 12, 0, 0);
         assert_eq!(relative_time(ts(2026, 7, 30, 10, 0, 0), now), "2 hours ago");
         assert_eq!(relative_time(ts(2026, 7, 29, 12, 0, 0), now), "1 day ago");
-        assert_eq!(relative_time(ts(2026, 7, 23, 12, 0, 0), now), "1 week ago");
-        assert_eq!(relative_time(ts(2026, 6, 1, 12, 0, 0), now), "1 month ago");
+        assert_eq!(relative_time(ts(2026, 7, 18, 12, 0, 0), now), "12 days ago");
+        assert_eq!(relative_time(ts(2026, 5, 2, 12, 0, 0), now), "89 days ago");
+    }
+
+    #[test]
+    fn relative_time_months_and_years_start_at_90_days() {
+        let now = ts(2026, 7, 30, 12, 0, 0);
+        assert_eq!(relative_time(ts(2026, 5, 1, 12, 0, 0), now), "3 months ago");
+        assert_eq!(relative_time(ts(2026, 4, 1, 12, 0, 0), now), "4 months ago");
         assert_eq!(relative_time(ts(2024, 7, 30, 12, 0, 0), now), "2 years ago");
     }
 
@@ -403,12 +411,19 @@ mod tests {
     }
 
     #[test]
-    fn relative_time_future_hours_days_weeks_months_years() {
+    fn relative_time_future_hours_and_days_under_90_are_shown_as_days() {
         let now = ts(2026, 7, 30, 12, 0, 0);
         assert_eq!(relative_time(ts(2026, 7, 30, 14, 0, 0), now), "in 2 hours");
         assert_eq!(relative_time(ts(2026, 7, 31, 12, 0, 0), now), "in 1 day");
-        assert_eq!(relative_time(ts(2026, 8, 6, 12, 0, 0), now), "in 1 week");
-        assert_eq!(relative_time(ts(2026, 8, 29, 12, 0, 0), now), "in 1 month");
+        assert_eq!(relative_time(ts(2026, 8, 11, 12, 0, 0), now), "in 12 days");
+        assert_eq!(relative_time(ts(2026, 10, 27, 12, 0, 0), now), "in 89 days");
+    }
+
+    #[test]
+    fn relative_time_future_months_and_years_start_at_90_days() {
+        let now = ts(2026, 7, 30, 12, 0, 0);
+        assert_eq!(relative_time(ts(2026, 10, 28, 12, 0, 0), now), "in 3 months");
+        assert_eq!(relative_time(ts(2026, 11, 27, 12, 0, 0), now), "in 4 months");
         assert_eq!(relative_time(ts(2028, 7, 30, 12, 0, 0), now), "in 2 years");
     }
 
