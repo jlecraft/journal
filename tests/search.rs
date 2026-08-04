@@ -201,3 +201,24 @@ fn all_flag_without_search_is_a_usage_error() {
         .failure()
         .code(2);
 }
+
+#[test]
+fn search_output_has_no_color_codes_when_stdout_is_not_a_terminal() {
+    // assert_cmd always captures output through a pipe, so stdout is never
+    // a TTY here -- this exercises the auto/pipe-safe gating in
+    // run_search directly, the same condition that keeps a Markdown
+    // renderer like `bat` from seeing raw ANSI escapes mixed into its input.
+    let (_dir, path) = fixture();
+    let out = cmd()
+        .arg("-f")
+        .arg(&path)
+        .args(["-s", "kernel"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let s = String::from_utf8(out).unwrap();
+    assert!(s.contains("linux kernel"));
+    assert!(!s.contains('\x1b'));
+}

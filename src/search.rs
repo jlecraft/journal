@@ -63,6 +63,117 @@ pub fn search<'a>(entries: &'a [Entry], query: &str, opts: &SearchOptions) -> Ve
     matches
 }
 
+/// ANSI bold-red, matching `grep`'s default `GREP_COLORS` match style.
+const HIGHLIGHT_START: &str = "\x1b[1;31m";
+const HIGHLIGHT_END: &str = "\x1b[0m";
+
+/// Wraps every occurrence of `query`'s terms in `display_text` with ANSI
+/// color codes, so a match stands out inside a long entry the way `grep
+/// --color` highlights a match inside a long line. Caller decides *whether*
+/// to call this at all (only when stdout is an interactive terminal and
+/// `NO_COLOR` isn't set) -- this function always colors when it finds a
+/// term, regardless of TTY.
+pub fn highlight(display_text: &str, query: &str) -> String {
+    let terms = parse_terms(query);
+    if terms.is_empty() {
+        return display_text.to_string();
+    }
+
+    let lower = display_text.to_ascii_lowercase();
+    let mut ranges: Vec<(usize, usize)> = Vec::new();
+    for term in &terms {
+        match term {
+            Term::Substring(s) => ranges.extend(find_all(&lower, s)),
+            Term::Tag(t) => ranges.extend(find_tag_tokens(display_text, &lower, t)),
+        }
+    }
+    if ranges.is_empty() {
+        return display_text.to_string();
+    }
+
+    apply_highlights(display_text, ranges)
+}
+
+/// Byte ranges of every (possibly overlapping) occurrence of `needle` in
+/// `haystack`. Both must already be ASCII-lowercased by the caller so
+/// offsets found here are valid byte offsets into the original text too
+/// (ASCII lowering is byte-length-preserving and never touches non-ASCII
+/// bytes, unlike the full-Unicode `.to_lowercase()` used for match
+/// *determination* in `term_matches` -- a deliberate narrower case-fold
+/// here, since it only decides which bytes get colored, not whether an
+/// entry matches).
+fn find_all(haystack: &str, needle: &str) -> Vec<(usize, usize)> {
+    if needle.is_empty() {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    let mut start = 0;
+    while let Some(pos) = haystack[start..].find(needle) {
+        let begin = start + pos;
+        let end = begin + needle.len();
+        out.push((begin, end));
+        start = begin + 1;
+    }
+    out
+}
+
+/// Byte ranges of whitespace-delimited tokens in `display_text` that
+/// case-insensitively equal `tag` exactly -- the same full-word semantics
+/// `term_matches` uses for `Term::Tag`, so e.g. `@bp` never highlights
+/// `@bph`. `lower` is `display_text.to_ascii_lowercase()`, reused so this
+/// doesn't recompute it per tag term.
+fn find_tag_tokens(display_text: &str, lower: &str, tag: &str) -> Vec<(usize, usize)> {
+    let mut out = Vec::new();
+    let mut token_start: Option<usize> = None;
+    for (i, c) in display_text.char_indices() {
+        if c.is_whitespace() {
+            if let Some(start) = token_start.take() {
+                if &lower[start..i] == tag {
+                    out.push((start, i));
+                }
+            }
+        } else if token_start.is_none() {
+            token_start = Some(i);
+        }
+    }
+    if let Some(start) = token_start {
+        if &lower[start..display_text.len()] == tag {
+            out.push((start, display_text.len()));
+        }
+    }
+    out
+}
+
+/// Merges overlapping/adjacent ranges and wraps each with color codes in a
+/// single left-to-right pass, so terms that overlap (e.g. one term a
+/// substring of another) never produce nested/malformed escape sequences.
+fn apply_highlights(text: &str, mut ranges: Vec<(usize, usize)>) -> String {
+    ranges.sort_unstable();
+    let mut merged: Vec<(usize, usize)> = Vec::new();
+    for (start, end) in ranges {
+        match merged.last_mut() {
+            Some((_, last_end)) if start <= *last_end => {
+                if end > *last_end {
+                    *last_end = end;
+                }
+            }
+            _ => merged.push((start, end)),
+        }
+    }
+
+    let mut out = String::with_capacity(text.len() + merged.len() * (HIGHLIGHT_START.len() + HIGHLIGHT_END.len()));
+    let mut cursor = 0;
+    for (start, end) in merged {
+        out.push_str(&text[cursor..start]);
+        out.push_str(HIGHLIGHT_START);
+        out.push_str(&text[start..end]);
+        out.push_str(HIGHLIGHT_END);
+        cursor = end;
+    }
+    out.push_str(&text[cursor..]);
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -162,5 +273,60 @@ mod tests {
         assert!(results.is_empty());
         let results = search(&entries, "   ", &opts(true, None));
         assert!(results.is_empty());
+    }
+
+    #[test]
+    fn highlight_wraps_substring_case_insensitively() {
+        let out = highlight("### reading about Linux kernel internals", "linux");
+        assert_eq!(
+            out,
+            "### reading about \x1b[1;31mLinux\x1b[0m kernel internals"
+        );
+    }
+
+    #[test]
+    fn highlight_wraps_every_occurrence() {
+        let out = highlight("match one, match two", "match");
+        assert_eq!(
+            out,
+            "\x1b[1;31mmatch\x1b[0m one, \x1b[1;31mmatch\x1b[0m two"
+        );
+    }
+
+    #[test]
+    fn highlight_tag_requires_full_word_match_not_substring() {
+        let out = highlight("reading @bp today, unrelated @bph entry", "@bp");
+        assert_eq!(
+            out,
+            "reading \x1b[1;31m@bp\x1b[0m today, unrelated @bph entry"
+        );
+    }
+
+    #[test]
+    fn highlight_tag_match_is_case_insensitive() {
+        let out = highlight("reading @BP today", "@bp");
+        assert_eq!(out, "reading \x1b[1;31m@BP\x1b[0m today");
+    }
+
+    #[test]
+    fn highlight_merges_overlapping_ranges_from_multiple_terms() {
+        // "kernel" and "kern" both match "kernel" -- must not nest/double-wrap.
+        let out = highlight("linux kernel internals", "kernel kern");
+        assert_eq!(
+            out,
+            "linux \x1b[1;31mkernel\x1b[0m internals"
+        );
+    }
+
+    #[test]
+    fn highlight_returns_input_unchanged_when_nothing_matches() {
+        let text = "nothing relevant here";
+        assert_eq!(highlight(text, "absent"), text);
+    }
+
+    #[test]
+    fn highlight_returns_input_unchanged_for_empty_query() {
+        let text = "some entry text";
+        assert_eq!(highlight(text, "   "), text);
     }
 }

@@ -1,4 +1,4 @@
-use std::io::Read;
+use std::io::{IsTerminal, Read};
 use std::path::Path;
 
 use anyhow::{Context, Result};
@@ -99,9 +99,21 @@ fn run_search(path: &Path, query: &str, all: bool, limit: Option<usize>) -> Resu
         return Ok(1);
     }
 
+    // Color matched terms like `grep --color=auto`: only when stdout is an
+    // interactive terminal and NO_COLOR isn't set (https://no-color.org).
+    // Piped output (a file, `less`, or a Markdown renderer like `bat` --
+    // see Entry::display's doc comment) is never a terminal here, so it
+    // stays plain text and never collides with a renderer's own coloring.
+    let colorize = std::io::stdout().is_terminal() && std::env::var_os("NO_COLOR").is_none();
+
     let mut out = String::new();
     for e in &matches {
-        out.push_str(&e.display());
+        let text = e.display();
+        out.push_str(&if colorize {
+            search::highlight(&text, query)
+        } else {
+            text
+        });
     }
     print!("{out}");
     Ok(0)
