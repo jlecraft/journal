@@ -23,7 +23,8 @@ slept 7 hours
 - Tag entries by typing `@tag` anywhere in the text, or via `-t/--tags`
   (bare words are auto-prefixed with `@` and appended as their own line)
 - Search by tag (exact match) or keyword (case-insensitive substring), with
-  AND/OR term combining and a result limit
+  AND/OR term combining, a result limit, and an optional lines-only view
+  (`-L`) that prints just the matching lines under each entry's header
 - Show the last N entries with `-N` (e.g. `journal -3`)
 - Journal file location resolved via `-f`, `$JOURNAL_FILE`, or the XDG data
   directory, in that order
@@ -125,6 +126,22 @@ a `@tag` token found anywhere in the entry (`@bp` won't match `@bph`). A
 bare word also finds its `@`-prefixed form via ordinary substring matching --
 `journal -s "blood_pressure"` finds `@blood_pressure` the same as
 `journal -s "@blood_pressure"` does.
+
+For a long entry, `-L/--lines-only` prints just the matching lines under
+the entry's header instead of the full body:
+
+```sh
+journal -s "fm radio" -L        # header, then only lines containing "fm" or "radio"
+journal -s "fm radio" -a -L     # header, then only lines containing BOTH "fm" and "radio"
+```
+
+Combined with `-a/--all`, `-L` requires both terms on the *same* line to
+qualify -- stricter than plain `-a`, which is satisfied if the terms are
+spread across different lines anywhere in the entry.
+
+Matched terms are highlighted (bold red, like `grep --color`) whenever
+stdout is an interactive terminal; piped output (a file, `less`, a Markdown
+renderer like `bat`) stays plain text, and `NO_COLOR` disables it too.
 
 ### Show the last N entries
 
