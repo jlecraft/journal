@@ -182,19 +182,19 @@ fn find_tag_tokens(display_text: &str, lower: &str, tag: &str) -> Vec<(usize, us
     let mut token_start: Option<usize> = None;
     for (i, c) in display_text.char_indices() {
         if c.is_whitespace() {
-            if let Some(start) = token_start.take() {
-                if &lower[start..i] == tag {
-                    out.push((start, i));
-                }
+            if let Some(start) = token_start.take()
+                && &lower[start..i] == tag
+            {
+                out.push((start, i));
             }
         } else if token_start.is_none() {
             token_start = Some(i);
         }
     }
-    if let Some(start) = token_start {
-        if &lower[start..display_text.len()] == tag {
-            out.push((start, display_text.len()));
-        }
+    if let Some(start) = token_start
+        && &lower[start..display_text.len()] == tag
+    {
+        out.push((start, display_text.len()));
     }
     out
 }
