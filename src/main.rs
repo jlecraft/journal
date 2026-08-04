@@ -25,7 +25,7 @@ fn run(cli: Cli) -> Result<i32> {
     let path = storage::resolve_path(cli.file.as_deref())?;
 
     if let Some(query) = &cli.search {
-        return run_search(&path, query, cli.all, cli.limit);
+        return run_search(&path, query, cli.all, cli.limit, cli.lines_only);
     }
 
     if let Some(n) = cli.last {
@@ -89,15 +89,16 @@ fn run_last(path: &Path, n: usize) -> Result<i32> {
 
 /// Returns the process exit code: 0 if at least one entry matched, 1 if
 /// none did (grep-style; see §6.4 exit code convention).
-fn run_search(path: &Path, query: &str, all: bool, limit: Option<usize>) -> Result<i32> {
+fn run_search(
+    path: &Path,
+    query: &str,
+    all: bool,
+    limit: Option<usize>,
+    lines_only: bool,
+) -> Result<i32> {
     let contents = storage::read_contents(path)?;
     let entries = Entry::parse_all(&contents);
     let opts = search::SearchOptions { all, limit };
-    let matches = search::search(&entries, query, &opts);
-
-    if matches.is_empty() {
-        return Ok(1);
-    }
 
     // Color matched terms like `grep --color=auto`: only when stdout is an
     // interactive terminal and NO_COLOR isn't set (https://no-color.org).
@@ -106,15 +107,43 @@ fn run_search(path: &Path, query: &str, all: bool, limit: Option<usize>) -> Resu
     // stays plain text and never collides with a renderer's own coloring.
     let colorize = std::io::stdout().is_terminal() && std::env::var_os("NO_COLOR").is_none();
 
+    if lines_only {
+        let results = search::search_lines(&entries, query, &opts);
+        if results.is_empty() {
+            return Ok(1);
+        }
+
+        let mut out = String::new();
+        for (e, lines) in &results {
+            let mut block = e.display_header();
+            for line in lines {
+                block.push_str(line);
+                block.push('\n');
+            }
+            block.push('\n');
+            out.push_str(&colorized(block, query, colorize));
+        }
+        print!("{out}");
+        return Ok(0);
+    }
+
+    let matches = search::search(&entries, query, &opts);
+    if matches.is_empty() {
+        return Ok(1);
+    }
+
     let mut out = String::new();
     for e in &matches {
-        let text = e.display();
-        out.push_str(&if colorize {
-            search::highlight(&text, query)
-        } else {
-            text
-        });
+        out.push_str(&colorized(e.display(), query, colorize));
     }
     print!("{out}");
     Ok(0)
+}
+
+fn colorized(text: String, query: &str, colorize: bool) -> String {
+    if colorize {
+        search::highlight(&text, query)
+    } else {
+        text
+    }
 }

@@ -202,6 +202,109 @@ fn all_flag_without_search_is_a_usage_error() {
         .code(2);
 }
 
+/// A journal file with one multi-line entry, for exercising
+/// `-L/--lines-only` where line-vs-whole-entry matching actually differs.
+fn multiline_fixture() -> (TempDir, std::path::PathBuf) {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("journal.txt");
+    fs::write(
+        &path,
+        "[2026-07-10.08:00:00]\n\
+         fm radio broadcast\n\
+         unrelated line about weather\n\
+         reading linux kernel internals\n\n",
+    )
+    .unwrap();
+    (dir, path)
+}
+
+#[test]
+fn lines_only_prints_header_then_only_matching_lines() {
+    let (_dir, path) = multiline_fixture();
+    let out = cmd()
+        .arg("-f")
+        .arg(&path)
+        .args(["-s", "radio kernel"])
+        .arg("-L")
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let s = String::from_utf8(out).unwrap();
+    assert!(s.starts_with("### 2026-07-10 08:00:00 ("));
+    assert!(s.contains("fm radio broadcast"));
+    assert!(s.contains("reading linux kernel internals"));
+    assert!(!s.contains("unrelated line about weather"));
+}
+
+#[test]
+fn lines_only_with_all_flag_requires_both_terms_on_the_same_line() {
+    let (_dir, path) = multiline_fixture();
+    // "fm" and "kernel" each appear somewhere in the entry (so whole-entry
+    // --all would match it) but never on the same line, so -L must find
+    // no qualifying line and report no match.
+    cmd()
+        .arg("-f")
+        .arg(&path)
+        .args(["-s", "fm kernel"])
+        .args(["-a", "-L"])
+        .assert()
+        .failure()
+        .code(1)
+        .stdout(predicate::str::is_empty());
+}
+
+#[test]
+fn lines_only_with_all_flag_shows_the_line_containing_both_terms() {
+    let (_dir, path) = multiline_fixture();
+    let out = cmd()
+        .arg("-f")
+        .arg(&path)
+        .args(["-s", "radio broadcast"])
+        .args(["-a", "-L"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let s = String::from_utf8(out).unwrap();
+    assert!(s.contains("fm radio broadcast"));
+    assert!(!s.contains("unrelated line about weather"));
+    assert!(!s.contains("reading linux kernel internals"));
+}
+
+#[test]
+fn lines_only_without_search_is_a_usage_error() {
+    let (_dir, path) = fixture();
+    cmd()
+        .arg("-f")
+        .arg(&path)
+        .arg("-L")
+        .arg("some entry")
+        .assert()
+        .failure()
+        .code(2);
+}
+
+#[test]
+fn lines_only_output_has_no_color_codes_when_stdout_is_not_a_terminal() {
+    let (_dir, path) = multiline_fixture();
+    let out = cmd()
+        .arg("-f")
+        .arg(&path)
+        .args(["-s", "kernel"])
+        .arg("-L")
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let s = String::from_utf8(out).unwrap();
+    assert!(s.contains("reading linux kernel internals"));
+    assert!(!s.contains('\x1b'));
+}
+
 #[test]
 fn search_output_has_no_color_codes_when_stdout_is_not_a_terminal() {
     // assert_cmd always captures output through a pipe, so stdout is never

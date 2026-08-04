@@ -63,17 +63,24 @@ impl Entry {
     /// renderers (e.g. `bat`) color only this line, not the body line
     /// that follows it.
     pub fn display(&self) -> String {
-        let age = relative_time(self.timestamp, Local::now().naive_local());
-        let mut out = format!(
-            "### {} ({age})\n",
-            self.timestamp.format(DISPLAY_TIMESTAMP_FMT)
-        );
+        let mut out = self.display_header();
         if !self.body.is_empty() {
             out.push_str(&self.body);
             out.push('\n');
         }
         out.push('\n');
         out
+    }
+
+    /// Just the reformatted header line from `display` (heading + relative
+    /// age), with no body -- used by `-L/--lines-only` to print the entry's
+    /// header once, followed by only the lines that actually matched.
+    pub fn display_header(&self) -> String {
+        let age = relative_time(self.timestamp, Local::now().naive_local());
+        format!(
+            "### {} ({age})\n",
+            self.timestamp.format(DISPLAY_TIMESTAMP_FMT)
+        )
     }
 
     /// Parses a single entry block: a header line followed by its body

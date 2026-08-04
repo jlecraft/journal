@@ -57,6 +57,14 @@ pub struct Cli {
     /// -s/--search.
     #[arg(long = "limit", value_name = "N")]
     pub limit: Option<usize>,
+
+    /// Print only the matching lines of each entry (with the entry's
+    /// header above them) instead of the full entry body. Combined with
+    /// -a/--all, a line must contain every term itself to be shown, rather
+    /// than the terms being spread across different lines of the entry.
+    /// Only valid alongside -s/--search.
+    #[arg(short = 'L', long = "lines-only")]
+    pub lines_only: bool,
 }
 
 impl Cli {
@@ -89,6 +97,9 @@ impl Cli {
             }
             if self.limit.is_some() {
                 return Err("--limit can only be used with -s/--search".to_string());
+            }
+            if self.lines_only {
+                return Err("-L/--lines-only can only be used with -s/--search".to_string());
             }
         }
         if let Some(n) = self.last {
@@ -207,6 +218,7 @@ mod tests {
             search: Some("foo".to_string()),
             all: false,
             limit: None,
+            lines_only: false,
         };
         assert!(cli.validate().is_err());
     }
@@ -221,6 +233,7 @@ mod tests {
             search: None,
             all: false,
             limit: None,
+            lines_only: false,
         };
         assert!(cli.validate().is_err());
     }
@@ -235,7 +248,23 @@ mod tests {
             search: None,
             all: false,
             limit: None,
+            lines_only: false,
         };
         assert!(cli.validate().is_ok());
+    }
+
+    #[test]
+    fn validate_rejects_lines_only_without_search() {
+        let cli = Cli {
+            text: Some("some entry".to_string()),
+            last: None,
+            tags: None,
+            file: None,
+            search: None,
+            all: false,
+            limit: None,
+            lines_only: true,
+        };
+        assert!(cli.validate().is_err());
     }
 }

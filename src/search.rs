@@ -63,6 +63,61 @@ pub fn search<'a>(entries: &'a [Entry], query: &str, opts: &SearchOptions) -> Ve
     matches
 }
 
+fn line_matches_term(line: &str, lower_line: &str, term: &Term) -> bool {
+    match term {
+        // Scoped to this one line, unlike `term_matches`'s `entry.tags()`
+        // (which scans the whole body) -- `-L/--lines-only` needs to know
+        // whether *this* line carries the tag, not the entry as a whole.
+        Term::Tag(t) => line.split_whitespace().any(|tok| tok.to_lowercase() == *t),
+        Term::Substring(s) => lower_line.contains(s.as_str()),
+    }
+}
+
+/// Like `search`, but selects individual body lines rather than whole
+/// entries, for `-L/--lines-only`: an entry is included only if at least
+/// one of its body lines satisfies the term condition, and only those
+/// qualifying lines (not the full body) are returned alongside the entry.
+/// In `--all` mode a line must contain *every* term itself -- unlike
+/// `search`, which is satisfied if the terms are spread across different
+/// lines anywhere in the entry.
+///
+/// Truncation via `opts.limit` caps the number of entries returned (same
+/// meaning as in `search`), not the number of lines.
+pub fn search_lines<'a>(
+    entries: &'a [Entry],
+    query: &str,
+    opts: &SearchOptions,
+) -> Vec<(&'a Entry, Vec<&'a str>)> {
+    let terms = parse_terms(query);
+    if terms.is_empty() {
+        return Vec::new();
+    }
+
+    let mut results: Vec<(&Entry, Vec<&str>)> = Vec::new();
+    for e in entries {
+        let lines: Vec<&str> = e
+            .body
+            .lines()
+            .filter(|line| {
+                let lower = line.to_lowercase();
+                if opts.all {
+                    terms.iter().all(|t| line_matches_term(line, &lower, t))
+                } else {
+                    terms.iter().any(|t| line_matches_term(line, &lower, t))
+                }
+            })
+            .collect();
+        if !lines.is_empty() {
+            results.push((e, lines));
+        }
+    }
+
+    if let Some(limit) = opts.limit {
+        results.truncate(limit);
+    }
+    results
+}
+
 /// ANSI bold-red, matching `grep`'s default `GREP_COLORS` match style.
 const HIGHLIGHT_START: &str = "\x1b[1;31m";
 const HIGHLIGHT_END: &str = "\x1b[0m";
@@ -273,6 +328,57 @@ mod tests {
         assert!(results.is_empty());
         let results = search(&entries, "   ", &opts(true, None));
         assert!(results.is_empty());
+    }
+
+    #[test]
+    fn search_lines_or_mode_returns_only_lines_matching_any_term() {
+        let entries = vec![e(&[], "fm radio\nunrelated line\nlinux kernel")];
+        let results = search_lines(&entries, "radio kernel", &opts(false, None));
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].1, vec!["fm radio", "linux kernel"]);
+    }
+
+    #[test]
+    fn search_lines_and_mode_requires_both_terms_on_the_same_line() {
+        // Whole-entry `search` would match this entry in --all mode (each
+        // term appears somewhere), but no single line has both terms.
+        let entries = vec![e(&[], "fm radio\nbroadcast only")];
+        let results = search_lines(&entries, "fm broadcast", &opts(true, None));
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn search_lines_and_mode_returns_the_line_with_both_terms() {
+        let entries = vec![e(&[], "fm radio broadcast\nunrelated")];
+        let results = search_lines(&entries, "fm broadcast", &opts(true, None));
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].1, vec!["fm radio broadcast"]);
+    }
+
+    #[test]
+    fn search_lines_tag_term_requires_full_word_match_on_that_line() {
+        let entries = vec![e(&[], "reading @bp today\nunrelated @bph line")];
+        let results = search_lines(&entries, "@bp", &opts(false, None));
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].1, vec!["reading @bp today"]);
+    }
+
+    #[test]
+    fn search_lines_excludes_entries_with_no_qualifying_line() {
+        let entries = vec![e(&[], "nothing relevant here")];
+        let results = search_lines(&entries, "absent", &opts(false, None));
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn search_lines_limit_caps_number_of_entries_not_lines() {
+        let entries = vec![
+            e(&[], "match one\nmatch again"),
+            e(&[], "match two"),
+            e(&[], "match three"),
+        ];
+        let results = search_lines(&entries, "match", &opts(false, Some(2)));
+        assert_eq!(results.len(), 2);
     }
 
     #[test]
