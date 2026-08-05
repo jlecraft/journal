@@ -65,6 +65,12 @@ pub struct Cli {
     /// Only valid alongside -s/--search.
     #[arg(short = 'L', long = "lines-only")]
     pub lines_only: bool,
+
+    /// Print diagnostic information to stderr: the resolved journal file,
+    /// lock acquisition/release, and editor invocation details. Can be
+    /// combined with any other mode.
+    #[arg(short = 'v', long = "verbose")]
+    pub verbose: bool,
 }
 
 impl Cli {
@@ -219,6 +225,7 @@ mod tests {
             all: false,
             limit: None,
             lines_only: false,
+            verbose: false,
         };
         assert!(cli.validate().is_err());
     }
@@ -234,6 +241,7 @@ mod tests {
             all: false,
             limit: None,
             lines_only: false,
+            verbose: false,
         };
         assert!(cli.validate().is_err());
     }
@@ -249,6 +257,7 @@ mod tests {
             all: false,
             limit: None,
             lines_only: false,
+            verbose: false,
         };
         assert!(cli.validate().is_ok());
     }
@@ -264,6 +273,7 @@ mod tests {
             all: false,
             limit: None,
             lines_only: true,
+            verbose: false,
         };
         assert!(cli.validate().is_err());
     }

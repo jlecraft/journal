@@ -4,7 +4,7 @@ use std::path::Path;
 use anyhow::{Context, Result};
 use journal::cli::Cli;
 use journal::entry::Entry;
-use journal::{editor, entry, search, storage};
+use journal::{editor, entry, search, storage, vlog};
 
 fn main() {
     let cli = Cli::parse_args();
@@ -23,13 +23,14 @@ fn main() {
 
 fn run(cli: Cli) -> Result<i32> {
     let path = storage::resolve_path(cli.file.as_deref())?;
+    vlog(cli.verbose, format!("using journal file {}", path.display()));
 
     if let Some(query) = &cli.search {
-        return run_search(&path, query, cli.all, cli.limit, cli.lines_only);
+        return run_search(&path, query, cli.all, cli.limit, cli.lines_only, cli.verbose);
     }
 
     if let Some(n) = cli.last {
-        return run_last(&path, n);
+        return run_last(&path, n, cli.verbose);
     }
 
     match cli.text {
@@ -37,11 +38,11 @@ fn run(cli: Cli) -> Result<i32> {
             // `-` means "read entry text from stdin" (§6.5), the standard
             // Unix filter-tool convention (e.g. `echo "..." | journal -`).
             let text = if text == "-" { read_stdin_text()? } else { text };
-            append(&path, &text, cli.tags.as_deref())?;
+            append(&path, &text, cli.tags.as_deref(), cli.verbose)?;
             Ok(0)
         }
         None => {
-            editor::compose_new_entry(&path, cli.tags.as_deref())?;
+            editor::compose_new_entry(&path, cli.tags.as_deref(), cli.verbose)?;
             Ok(0)
         }
     }
@@ -60,7 +61,7 @@ fn read_stdin_text() -> Result<String> {
 /// line at the end of the entry text (§2.1); any `@tag` already typed
 /// inline in `text` is left exactly where it is, since a token is
 /// recognized as a tag by its shape wherever it appears, not by position.
-fn append(path: &Path, text: &str, tags_flag: Option<&str>) -> Result<()> {
+fn append(path: &Path, text: &str, tags_flag: Option<&str>, verbose: bool) -> Result<()> {
     let tags_line = tags_flag.and_then(entry::tags_line_from_flag);
     let body = match tags_line {
         Some(line) if text.is_empty() => line,
@@ -68,16 +69,26 @@ fn append(path: &Path, text: &str, tags_flag: Option<&str>) -> Result<()> {
         None => text.to_string(),
     };
     let e = Entry::now(body);
-    storage::append_entry(path, &e.render())
+    storage::append_entry(path, &e.render(), verbose)?;
+    vlog(verbose, format!("appended entry at {}", e.timestamp.format(entry::TIMESTAMP_FMT)));
+    Ok(())
 }
 
 /// Prints the last `n` entries in the journal (oldest to newest, same as
 /// `tail`), or fewer if the journal has less than `n` entries. An empty
 /// journal is not an error: nothing is printed and the exit code is 0.
-fn run_last(path: &Path, n: usize) -> Result<i32> {
+fn run_last(path: &Path, n: usize, verbose: bool) -> Result<i32> {
     let contents = storage::read_contents(path)?;
     let entries = Entry::parse_all(&contents);
     let start = entries.len().saturating_sub(n);
+    vlog(
+        verbose,
+        format!(
+            "{} entries in journal, printing last {}",
+            entries.len(),
+            entries.len() - start
+        ),
+    );
 
     let mut out = String::new();
     for e in &entries[start..] {
@@ -95,6 +106,7 @@ fn run_search(
     all: bool,
     limit: Option<usize>,
     lines_only: bool,
+    verbose: bool,
 ) -> Result<i32> {
     let contents = storage::read_contents(path)?;
     let entries = Entry::parse_all(&contents);
@@ -109,6 +121,7 @@ fn run_search(
 
     if lines_only {
         let results = search::search_lines(&entries, query, &opts);
+        vlog(verbose, format!("{} entries matched", results.len()));
         if results.is_empty() {
             return Ok(1);
         }
@@ -128,6 +141,7 @@ fn run_search(
     }
 
     let matches = search::search(&entries, query, &opts);
+    vlog(verbose, format!("{} entries matched", matches.len()));
     if matches.is_empty() {
         return Ok(1);
     }

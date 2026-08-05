@@ -325,3 +325,28 @@ fn search_output_has_no_color_codes_when_stdout_is_not_a_terminal() {
     assert!(s.contains("linux kernel"));
     assert!(!s.contains('\x1b'));
 }
+
+#[test]
+fn verbose_flag_prints_match_count_to_stderr_only() {
+    let (_dir, path) = fixture();
+    cmd()
+        .arg("-f")
+        .arg(&path)
+        .args(["-s", "kernel"])
+        .arg("-v")
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("entries matched"));
+}
+
+#[test]
+fn without_verbose_flag_stderr_is_silent_on_search() {
+    let (_dir, path) = fixture();
+    cmd()
+        .arg("-f")
+        .arg(&path)
+        .args(["-s", "kernel"])
+        .assert()
+        .success()
+        .stderr(predicate::str::is_empty());
+}

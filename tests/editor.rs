@@ -275,6 +275,47 @@ fn editor_failure_leaves_journal_untouched_and_reports_error() {
 }
 
 #[test]
+fn sigint_during_editor_removes_the_temp_edit_buffer() {
+    let dir = tempfile::tempdir().unwrap();
+    let journal_path = dir.path().join("journal.txt");
+    // Never touches "$1" -- just gives us a window to send SIGINT before
+    // the (fake) editor would otherwise exit on its own.
+    let editor = fake_editor(dir.path(), "slow-editor.sh", "sleep 5");
+
+    // assert_cmd::Command has no public `spawn` (it wants `.assert()`
+    // instead), so this test needs a real std::process::Child to signal
+    // mid-run -- build one directly against the built binary's path.
+    let mut child = std::process::Command::new(assert_cmd::cargo::cargo_bin("journal"))
+        .env_remove("JOURNAL_FILE")
+        .env_remove("XDG_DATA_HOME")
+        .env_remove("XDG_CONFIG_HOME")
+        .env("EDITOR", &editor)
+        .arg("-f")
+        .arg(&journal_path)
+        .spawn()
+        .unwrap();
+
+    // Give journal time to seed the temp file and launch the editor.
+    std::thread::sleep(std::time::Duration::from_millis(300));
+
+    std::process::Command::new("kill")
+        .args(["-INT", &child.id().to_string()])
+        .status()
+        .unwrap();
+
+    let status = child.wait().unwrap();
+    assert_eq!(status.code(), Some(130));
+
+    let leaked: Vec<_> = fs::read_dir(dir.path())
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_name().to_string_lossy().starts_with(".journal-edit-"))
+        .collect();
+    assert!(leaked.is_empty(), "leaked temp file(s): {leaked:?}");
+    assert!(!journal_path.exists());
+}
+
+#[test]
 fn editor_session_does_not_leave_the_lock_held() {
     let dir = tempfile::tempdir().unwrap();
     let journal_path = dir.path().join("journal.txt");

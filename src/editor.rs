@@ -9,6 +9,7 @@ use chrono::Local;
 use crate::config::Config;
 use crate::entry::{self, normalize_trailing_blank_lines, Entry, TIMESTAMP_FMT};
 use crate::storage;
+use crate::vlog;
 
 /// Runs the no-argument "open $EDITOR to compose a new entry" flow
 /// (§5.1). The timestamp is seeded only into a temporary buffer; the
@@ -16,12 +17,19 @@ use crate::storage;
 /// `tags_flag` is `-t/--tags`'s raw value, if given -- its normalized
 /// tags line is pre-seeded at the end of the new entry, same as the
 /// non-editor append path (§2.1).
-pub fn compose_new_entry(path: &Path, tags_flag: Option<&str>) -> Result<()> {
+pub fn compose_new_entry(path: &Path, tags_flag: Option<&str>, verbose: bool) -> Result<()> {
     let config = crate::config::load()?;
-    storage::with_exclusive_lock(path, || compose_locked(path, tags_flag, &config))
+    storage::with_exclusive_lock(path, verbose, || {
+        compose_locked(path, tags_flag, &config, verbose)
+    })
 }
 
-fn compose_locked(path: &Path, tags_flag: Option<&str>, config: &Config) -> Result<()> {
+fn compose_locked(
+    path: &Path,
+    tags_flag: Option<&str>,
+    config: &Config,
+    verbose: bool,
+) -> Result<()> {
     let existing = storage::read_contents(path)?;
     let timestamp_line = format!("[{}]", Local::now().format(TIMESTAMP_FMT));
     let tags_line = tags_flag.and_then(entry::tags_line_from_flag);
@@ -38,11 +46,27 @@ fn compose_locked(path: &Path, tags_flag: Option<&str>, config: &Config) -> Resu
         .context("failed to create a temporary file for editing")?;
     fs::write(temp.path(), seed.as_bytes())
         .context("failed to seed the temporary edit buffer")?;
+    vlog(verbose, format!("editing via temp file {}", temp.path().display()));
+
+    // Rust's default SIGINT/SIGTERM disposition terminates the process
+    // without running destructors, so the temp file's Drop-based
+    // auto-delete (tempfile::NamedTempFile) wouldn't fire if the user hits
+    // Ctrl-C while $EDITOR is running -- clean it up explicitly instead.
+    // Registration failure is ignored: this is a one-shot CLI invocation,
+    // and falling back to the pre-existing (no cleanup) behavior beats
+    // aborting an otherwise-fine editing session over this enhancement.
+    let temp_path_for_signal = temp.path().to_path_buf();
+    let _ = ctrlc::set_handler(move || {
+        let _ = fs::remove_file(&temp_path_for_signal);
+        eprintln!("journal: interrupted, removed temporary edit buffer");
+        std::process::exit(130); // 128 + SIGINT, standard convention
+    });
 
     let before_mtime = mtime_of(temp.path())?;
 
     let (program, base_args) = parse_editor_command(env::var("EDITOR").ok().as_deref())?;
     let cursor_args = cursor_positioning_args(config, cursor_line)?;
+    vlog(verbose, format!("launching editor: {program} {base_args:?}"));
     // Cursor-positioning args go first, ahead of anything else in
     // $EDITOR: vim/vim-likes run `+cmd`/`-c cmd` arguments in the order
     // given, so if $EDITOR itself carries extra `-c` commands (e.g. for
@@ -65,6 +89,7 @@ fn compose_locked(path: &Path, tags_flag: Option<&str>, config: &Config) -> Resu
         // Editor exited successfully but never wrote the file (e.g. `:q`
         // with nothing typed, or `:q!`) -- nothing to persist, and the
         // real journal file is left exactly as it was (§5.1).
+        vlog(verbose, "editor exited without saving changes");
         return Ok(());
     }
 
@@ -77,6 +102,7 @@ fn compose_locked(path: &Path, tags_flag: Option<&str>, config: &Config) -> Resu
     temp.persist(path)
         .map_err(|e| e.error)
         .with_context(|| format!("failed to atomically replace {}", path.display()))?;
+    vlog(verbose, "entry saved");
     Ok(())
 }
 

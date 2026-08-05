@@ -85,7 +85,11 @@ pub fn read_contents(path: &Path) -> Result<String> {
 /// re-opening a lost-update race. Locking a sidecar path that's never
 /// renamed avoids that hazard, and append_entry uses the same helper so
 /// both operations serialize against each other correctly.
-pub fn with_exclusive_lock<T>(path: &Path, f: impl FnOnce() -> Result<T>) -> Result<T> {
+pub fn with_exclusive_lock<T>(
+    path: &Path,
+    verbose: bool,
+    f: impl FnOnce() -> Result<T>,
+) -> Result<T> {
     let lock_path = lock_path_for(path);
     let lock_file = OpenOptions::new()
         .create(true)
@@ -93,11 +97,13 @@ pub fn with_exclusive_lock<T>(path: &Path, f: impl FnOnce() -> Result<T>) -> Res
         .write(true)
         .open(&lock_path)
         .with_context(|| format!("failed to open lock file at {}", lock_path.display()))?;
+    crate::vlog(verbose, format!("acquiring lock at {}", lock_path.display()));
     lock_file
         .lock_exclusive()
         .with_context(|| format!("failed to acquire lock at {}", lock_path.display()))?;
     let result = f();
     let _ = FileExt::unlock(&lock_file);
+    crate::vlog(verbose, "lock released");
     result
 }
 
@@ -111,8 +117,8 @@ fn lock_path_for(path: &Path) -> PathBuf {
 /// the journal file, creating it first if needed. The write is
 /// serialized via `with_exclusive_lock`, and the file descriptor is
 /// opened in `O_APPEND` mode as defense in depth for the write itself.
-pub fn append_entry(path: &Path, rendered: &str) -> Result<()> {
-    with_exclusive_lock(path, || {
+pub fn append_entry(path: &Path, rendered: &str, verbose: bool) -> Result<()> {
+    with_exclusive_lock(path, verbose, || {
         ensure_exists(path)?;
         let mut file = OpenOptions::new()
             .append(true)
@@ -217,7 +223,7 @@ mod tests {
     fn append_entry_creates_file_and_writes_content() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("journal.txt");
-        append_entry(&path, "[2026-07-28.14:03:00]\nfirst entry\n\n").unwrap();
+        append_entry(&path, "[2026-07-28.14:03:00]\nfirst entry\n\n", false).unwrap();
         assert_eq!(
             std::fs::read_to_string(&path).unwrap(),
             "[2026-07-28.14:03:00]\nfirst entry\n\n"
@@ -228,8 +234,8 @@ mod tests {
     fn append_entry_appends_after_existing_content() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("journal.txt");
-        append_entry(&path, "[2026-07-28.14:03:00]\nfirst\n\n").unwrap();
-        append_entry(&path, "[2026-07-28.15:00:00]\nsecond\n\n").unwrap();
+        append_entry(&path, "[2026-07-28.14:03:00]\nfirst\n\n", false).unwrap();
+        append_entry(&path, "[2026-07-28.15:00:00]\nsecond\n\n", false).unwrap();
         assert_eq!(
             std::fs::read_to_string(&path).unwrap(),
             "[2026-07-28.14:03:00]\nfirst\n\n[2026-07-28.15:00:00]\nsecond\n\n"
@@ -240,7 +246,7 @@ mod tests {
     fn with_exclusive_lock_creates_a_sidecar_lock_file() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("journal.txt");
-        with_exclusive_lock(&path, || Ok(())).unwrap();
+        with_exclusive_lock(&path, false, || Ok(())).unwrap();
         assert!(dir.path().join("journal.txt.lock").exists());
     }
 
@@ -248,17 +254,17 @@ mod tests {
     fn with_exclusive_lock_is_reentrant_safe_after_release() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("journal.txt");
-        with_exclusive_lock(&path, || Ok::<_, anyhow::Error>(())).unwrap();
+        with_exclusive_lock(&path, false, || Ok::<_, anyhow::Error>(())).unwrap();
         // A second, later call must not deadlock now that the first
         // call's lock has been released.
-        with_exclusive_lock(&path, || Ok::<_, anyhow::Error>(())).unwrap();
+        with_exclusive_lock(&path, false, || Ok::<_, anyhow::Error>(())).unwrap();
     }
 
     #[test]
     fn with_exclusive_lock_propagates_the_closure_error() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("journal.txt");
-        let result: Result<()> = with_exclusive_lock(&path, || anyhow::bail!("boom"));
+        let result: Result<()> = with_exclusive_lock(&path, false, || anyhow::bail!("boom"));
         assert!(result.is_err());
     }
 }

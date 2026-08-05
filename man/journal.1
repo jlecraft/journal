@@ -4,7 +4,7 @@
 .SH NAME
 journal \- A command\-line utility for appending timestamped, taggable entries to a plain\-text journal file, and searching that file by tag or keyword.
 .SH SYNOPSIS
-\fBjournal\fR [\fB\-t\fR|\fB\-\-tags\fR] [\fB\-f\fR|\fB\-\-file\fR] [\fB\-s\fR|\fB\-\-search\fR] [\fB\-a\fR|\fB\-\-all\fR] [\fB\-\-limit\fR] [\fB\-L\fR|\fB\-\-lines\-only\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fB\-V\fR|\fB\-\-version\fR] [\fITEXT\fR] 
+\fBjournal\fR [\fB\-t\fR|\fB\-\-tags\fR] [\fB\-f\fR|\fB\-\-file\fR] [\fB\-s\fR|\fB\-\-search\fR] [\fB\-a\fR|\fB\-\-all\fR] [\fB\-\-limit\fR] [\fB\-L\fR|\fB\-\-lines\-only\fR] [\fB\-v\fR|\fB\-\-verbose\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fB\-V\fR|\fB\-\-version\fR] [\fITEXT\fR] 
 .SH DESCRIPTION
 A command\-line utility for appending timestamped, taggable entries to a plain\-text journal file, and searching that file by tag or keyword.
 .SH OPTIONS
@@ -26,6 +26,9 @@ Cap the number of printed search matches. Only valid alongside \-s/\-\-search
 .TP
 \fB\-L\fR, \fB\-\-lines\-only\fR
 Print only the matching lines of each entry (with the entry\*(Aqs header above them) instead of the full entry body. Combined with \-a/\-\-all, a line must contain every term itself to be shown, rather than the terms being spread across different lines of the entry. Only valid alongside \-s/\-\-search
+.TP
+\fB\-v\fR, \fB\-\-verbose\fR
+Print diagnostic information to stderr: the resolved journal file, lock acquisition/release, and editor invocation details. Can be combined with any other mode
 .TP
 \fB\-h\fR, \fB\-\-help\fR
 Print help

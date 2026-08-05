@@ -1,4 +1,5 @@
 use assert_cmd::Command;
+use predicates::prelude::*;
 use std::fs;
 
 fn cmd() -> Command {
@@ -92,6 +93,36 @@ fn creates_journal_file_and_parent_dirs_via_xdg_default() {
     assert!(fs::read_to_string(&expected)
         .unwrap()
         .contains("entry via xdg default"));
+}
+
+#[test]
+fn verbose_flag_prints_diagnostics_to_stderr_only() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("journal.txt");
+
+    cmd()
+        .arg("-f")
+        .arg(&path)
+        .arg("-v")
+        .arg("some entry")
+        .assert()
+        .success()
+        .stdout(predicate::str::is_empty())
+        .stderr(predicate::str::contains("using journal file"));
+}
+
+#[test]
+fn without_verbose_flag_stderr_is_silent() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("journal.txt");
+
+    cmd()
+        .arg("-f")
+        .arg(&path)
+        .arg("some entry")
+        .assert()
+        .success()
+        .stderr(predicate::str::is_empty());
 }
 
 #[test]
