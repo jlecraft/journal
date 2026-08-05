@@ -1,16 +1,21 @@
 # `journal` — CLI Journaling Tool Specification
 
 **Language:** Rust
-**Status:** Draft v0.1 — open questions marked below
+
+This document describes `journal`'s current behavior in full and is kept in
+sync with the implementation — it is a reference, not a design log. For
+installation and quick usage examples, see `README.md`.
 
 ## 1. Overview
 
-`journal` is a command-line utility for appending timestamped, taggable entries to
-a plain-text journal file, and for searching that file by tag or keyword. Entries
-are stored in a flat, human-readable format so the underlying file remains
-inspectable and editable without the tool.
+`journal` is a command-line utility for appending timestamped, taggable
+entries to a plain-text journal file, and for searching that file by tag or
+keyword. Entries are stored in a flat, human-readable format so the
+underlying file remains inspectable and editable without the tool. There are
+no subcommands (no `add`/`list`/`show` verbs) — behavior is selected entirely
+by which flags are present on a single top-level command.
 
-## 2. Entry Format
+## 2. On-Disk Entry Format
 
 ```
 [YYYY-MM-DD.HH:MM:SS]
@@ -20,19 +25,22 @@ Entry body, line 2 (optional)
 
 ```
 
-- **Line 1:** timestamp in `[YYYY-MM-DD.HH:MM:SS]` format, and nothing else. The
-  timestamp is always alone on its own line.
-- **Body:** any number of lines, including blank lines. `@tag` tokens may appear
-  anywhere in the body -- there is no separate structured storage for tags.
-- **Terminator:** every entry ends with exactly one blank line. If the entry text
-  supplied by the user has trailing blank lines, they are collapsed to one; if it
-  has none, one is appended.
+- **Header line:** a timestamp in `[YYYY-MM-DD.HH:MM:SS]` format, and nothing
+  else. The timestamp is always alone on its own line.
+- **Body:** any number of lines, including blank lines. `@tag` tokens may
+  appear anywhere in the body — there is no separate structured storage for
+  tags.
+- **Terminator:** every entry ends with exactly one blank line. If the entry
+  text supplied by the user has trailing blank lines, they are collapsed to
+  one; if it has none, one is appended.
+- **Multiple entries** in a file are simply concatenated; entry boundaries
+  are located by scanning for header lines, not blank lines, since a body may
+  legitimately contain blank lines of its own.
 
 ### 2.1 Tags
 
-**Resolved (re-architected):** tags are no longer a structured field hoisted
-onto the timestamp line. A tag is simply any token matching `@\S+`, recognized
-by shape wherever it appears in the body:
+A tag is any token matching `@\S+`, recognized by shape wherever it appears
+in the body — tags are not a structured field hoisted onto the header line.
 
 | Method | Example | Result |
 |---|---|---|
@@ -42,204 +50,264 @@ by shape wherever it appears in the body:
 No hoisting, extraction, or de-duplication occurs. `-t/--tags` bare words
 (without a leading `@`) are automatically prefixed with `@` before being
 concatenated onto their own line; tokens already prefixed are left as-is.
-Inline tags typed directly in the entry text are left completely untouched --
+Inline tags typed directly in the entry text are left completely untouched —
 they're just body text that happens to match the tag shape.
 
-## 3. Search (`-s/--search`)
+## 3. Modes of Operation
+
+### 3.1 Append an entry
+
+```sh
+journal "124/80/55 @bp @health"
+journal -t "sleep" "slept 7 hours"       # appends "@sleep" as its own line
+echo "back from a walk @exercise" | journal -
+```
+
+Positional `TEXT` is appended as a new entry with the current timestamp.
+`-t/--tags` (if given) is normalized per §2.1 and concatenated onto its own
+trailing line. A literal `-` as the text argument reads the entry body from
+stdin instead (the standard Unix filter-tool convention). `-t/--tags` and
+positional `TEXT` both conflict with `-s/--search` at the argument-parsing
+level (exit code 2 if combined).
+
+### 3.2 Compose via `$EDITOR` (no arguments)
+
+Running `journal` with no positional text opens the resolved journal file in
+`$EDITOR` (falling back to `vi`) via a temporary buffer — see §6 for the full
+mechanics. `-t/--tags` works here too, pre-seeding a tags line into the
+buffer.
+
+### 3.3 Show the last N entries (`-N`)
+
+```sh
+journal -3
+```
+
+Prints the last `N` entries in chronological order (oldest → newest, like
+`tail`), using the human-facing display format (§4). Fewer than `N` entries
+in the journal is not an error — everything available is printed. An empty
+journal prints nothing and exits `0`.
+
+`-N` is a short flag whose name is a variable-length run of digits, which
+`clap`'s derive API cannot express as a declared flag; it's extracted from
+`argv` by hand before the rest of the arguments reach `clap`. It cannot be
+combined with `-s/--search`, positional `TEXT`, or `-t/--tags`, and `-0` is
+rejected (all three: exit code 2).
+
+### 3.4 Search (`-s/--search`)
+
+```sh
+journal -s "@bp"                # entries tagged @bp (exact tag match)
+journal -s "fm radio"           # entries containing "fm" OR "radio"
+journal -s "fm radio" -a        # entries containing "fm" AND "radio"
+journal -s "linux+kernel"       # entries containing the literal phrase "linux kernel"
+journal -s "th" --limit 5       # cap the number of results
+journal -s "fm radio" -L        # print only the matching lines, not full entries
+```
+
+`-a/--all`, `--limit`, and `-L/--lines-only` are usage errors (exit code 2)
+unless `-s/--search` is also given.
+
+#### 3.4.1 Term parsing
+
+The query is split on whitespace into terms. Within a term, `+` is replaced
+with a space, joining words into one multi-word substring term (e.g.
+`linux+kernel` matches the literal substring `linux kernel`). A term starting
+with `@` (and longer than just `@`) is a **tag term**; anything else is a
+**substring term**. All terms are matched case-insensitively.
+
+- **Substring term:** matches if it appears anywhere in the match scope (see
+  §3.4.2 / §3.4.3 for what that scope is) as a plain substring. This is
+  broad by design — a search for `"th"` matches inside `"weather"` or
+  `"month"` too, so short or common terms can return many results.
+- **Tag term:** requires a **full-word match** against a `@tag` token found
+  in the match scope — a search for `@bp` matches the tag `@bp` but not
+  `@bph`. A bare word without `@` still finds a tag via ordinary substring
+  matching (`blood_pressure` matches `@blood_pressure` as a substring of the
+  whole entry).
+
+#### 3.4.2 Whole-entry mode (default)
+
+An entry matches if its terms are satisfied *anywhere* in the entry — the
+on-disk header line plus the full body, treated as one string. Default is OR
+(any term matches); `-a/--all` requires every term to match somewhere in the
+entry, not necessarily on the same line. On match, the entry is printed in
+full using the display format (§4). `--limit N` caps the number of matching
+entries printed (not the number of matched lines/terms). Multiple matching
+entries are separated by a blank line.
+
+#### 3.4.3 Lines-only mode (`-L`/`--lines-only`)
+
+Instead of the full entry body, prints the entry's header (§4) once, followed
+by only the body lines that themselves satisfy the term condition:
+
+- Default (OR): a line qualifies if it contains *any* term.
+- `-a/--all` combined with `-L`: a line qualifies only if it contains *every*
+  term **on that same line** — stricter than whole-entry `-a`, where terms
+  may be spread across different lines of the entry.
+
+An entry is included in the output only if it has at least one qualifying
+line; `--limit N` still caps the number of entries (not lines) printed.
+
+#### 3.4.4 Highlighting
+
+Matched terms are wrapped in ANSI bold-red (`grep`'s default match style)
+wherever they appear in the printed output, in both whole-entry and
+lines-only mode. Highlighting is applied only when stdout is an interactive
+terminal and the `NO_COLOR` environment variable is unset — piped output (a
+file, `less`, a Markdown renderer like `bat`) is always plain text, so raw
+ANSI escapes never collide with a downstream renderer's own coloring.
+
+#### 3.4.5 Exit status
+
+A search that finds no matches (in either mode) exits `1` with no output, the
+same convention as `grep`. A search that finds at least one match exits `0`.
+
+## 4. Human-Facing Display Format
+
+Search results (§3.4) and `-N` output (§3.3) use a different rendering than
+the on-disk format (§2): the header is reformatted as a Markdown ATX heading
+with a relative-age annotation, rather than the on-disk `[...]` bracket form:
 
 ```
-journal -s "@bp"
-journal -s "fm radio"
-journal -s "linux+kernel"
+### 2026-07-28 14:03:00 (12 days ago)
+124/80/55 @bp @health
+
 ```
 
-- The search string is tokenized on whitespace into terms.
-- A `+` inside a token joins words into a single multi-word term, with `+`
-  replaced by a space for matching purposes (e.g. `linux+kernel` → matches the
-  literal substring `linux kernel`).
-- **Default (OR) mode:** an entry matches if *any* term is found anywhere in the
-  entry (timestamp line + body).
-- **`-a/--all` (AND) mode:** an entry matches only if *all* terms are found.
-- **Matching for non-tag terms:** case-insensitive, substring-based. A search
-  for `"th"` will match `"th"` anywhere in the entry — including inside longer
-  words like `"weather"` or `"month"` — so short or common terms can return a
-  large number of results. This is expected behavior, not a bug.
-- On match, the **entire entry** (timestamp line and full body) is printed.
+An ATX heading (`###`), rather than a `>` blockquote, has no Markdown lazy
+continuation, so a renderer like `bat` colors only the header line and not
+the body line that follows it. The relative-age phrase is computed against
+the current time:
 
-**Resolved:** `@`-prefixed search terms require a **full-word match** against
-a `@tag` token found anywhere in the entry's body (not a substring match).
-This is a deliberate exception to the general substring-matching rule in §3: a
-search for `@bp` matches the tag `@bp` but not `@bph`. Non-tag search terms are
-unaffected and continue to use case-insensitive substring matching per §3 --
-which means a bare word like `blood_pressure` also finds an inline
-`@blood_pressure` tag, since it's a substring match against the whole entry.
+| Elapsed | Phrase |
+|---|---|
+| < 1 minute | `just now` |
+| < 1 hour | `N minute(s) ago` |
+| < 1 day | `N hour(s) ago` |
+| < 90 days | `N day(s) ago` (raw day count, no week rounding) |
+| < 1 year | `N month(s) ago` |
+| ≥ 1 year | `N year(s) ago` |
 
-**Open questions:**
-1. How multiple matching entries be separated by a blank line or a visual
-   delimiter when printed, so entry boundaries are unambiguous in output?
-2. Given substring matching is broad by design for non-tag terms, should there
-   be a result count / pagination / `--limit` mechanism to keep output
-   manageable for short, common search terms?
+A postdated (future) timestamp uses `in N unit(s)` instead of `N unit(s)
+ago`, collapsing to `just now` within one minute either direction.
 
-## 4. File Location
+## 5. File Location Resolution
 
 Resolved in this precedence order:
 
 1. `-f/--file <path>` command-line argument
-2. `$JOURNAL_FILE` environment variable
+2. `$JOURNAL_FILE` environment variable (an empty/whitespace-only value is
+   treated as unset)
 3. XDG default: `$XDG_DATA_HOME/journal/journal.txt`, falling back to
-   `~/.local/share/journal/journal.txt` if `$XDG_DATA_HOME` is unset (per the
-   XDG Base Directory spec). The tool should create the directory and file if
-   they don't yet exist.
+   `~/.local/share/journal/journal.txt` if `$XDG_DATA_HOME` is unset, per the
+   XDG Base Directory spec. Parent directories are created automatically for
+   this default; an explicit `-f`/`$JOURNAL_FILE` path is expected to already
+   have an existing parent directory (`touch`-like semantics).
 
-## 5. Editor Integration
+## 6. Editor Integration
 
-`$EDITOR` is used when an editing action is invoked; if unset, falls back to
-`vi`.
+`$EDITOR` is used for the no-argument compose flow (§3.2); if unset, falls
+back to `vi`. `$EDITOR`'s value is shell-word split (so quoted paths with
+spaces work), giving a program name and its own leading arguments.
 
-### 5.1 No-argument invocation
+The timestamp for the new entry (and any pre-seeded `-t/--tags` line) is
+inserted only into a temporary buffer, seeded with the journal's existing
+contents plus the new header line and a blank line positioned right after it
+for the cursor — never written ahead of time to the real journal file. The
+editor is launched against that temp file. Whether the user actually saved
+is detected by comparing the temp file's modification time before and after
+the editor process exits:
 
-Running `journal` with no arguments opens the resolved journal file directly in
-`$EDITOR` (or `vi`), with the timestamp line for a new entry
-(`[YYYY-MM-DD.HH:MM:SS]`) pre-inserted at the end, followed by a blank line
-where the cursor is positioned for the user to type body text. If
-`-t/--tags` is also given, its normalized tags line (§2.1) is pre-seeded
-after that blank line, so the saved entry ends up in the same
-tags-on-their-own-trailing-line shape the non-editor append path produces.
+- **No change in mtime** (e.g. `:q` or `:q!` in vim with nothing written):
+  the real journal file is left completely untouched, and nothing is
+  persisted.
+- **mtime changed:** the edited buffer is read back, the newly-composed
+  entry (found by locating the last header line — everything before it is
+  left byte-for-byte as the user last had it) is re-normalized the same way
+  the non-editor append path normalizes trailing blank lines, and the result
+  atomically replaces the real journal file (temp file persisted over the
+  original path).
 
-**Resolved:** the timestamp (and any pre-seeded tags line) is inserted only
-into the editor's in-memory buffer, not written to the on-disk journal file
-beforehand. This means:
-- If the user saves and exits normally, the timestamp (plus whatever body
-  text and tags they typed) is persisted as part of that save, and the usual
-  trailing-blank-line normalization pass runs afterward.
-- If the user aborts the editor without saving (e.g. `:q!` in vim), the on-disk
-  journal file is never touched, and no orphaned or empty timestamp entry is
-  left behind.
+A non-zero editor exit status is treated as a failure (nothing is persisted,
+the process exits with an error).
 
-This requires the editor to be launched against a temporary buffer/file seeded
-with the existing journal contents plus the new timestamp line, rather than
-writing the timestamp directly into the real journal file and hoping the editor
-either commits or the tool reverts it. On save, the temp buffer's contents
-replace the real journal file (e.g. via a rename over the original for
-atomicity); on abort, the temp file is discarded.
+**Cursor positioning** is opt-in via the config file (§7), since no single
+command-line flag positions an editor's cursor across every editor
+(vi/vim/nano use `+N`; GUI editors vary). With no config, no extra arguments
+are passed and the cursor lands wherever the editor defaults to.
 
-**Resolved: cursor positioning.** There's no single command-line flag that
-positions an editor's cursor on a given line across every editor (vi/vim/nano
-use `+N`; GUI editors vary), so journal doesn't hardcode one. Instead, an
-optional config file at `$XDG_CONFIG_HOME/journal/config.toml` (falling back
-to `~/.config/journal/config.toml`, same default resolution as §4) supports:
+## 7. Config File
+
+An optional TOML file at `$XDG_CONFIG_HOME/journal/config.toml` (falling
+back to `~/.config/journal/config.toml`, same resolution as §5) configures
+editor cursor positioning:
 
 ```toml
 [editor]
 args = "+{line}"
 ```
 
-`args` is shell-word split (same quoting rules as `$EDITOR`), `{line}` is
-replaced with the 1-indexed line number of the seeded blank line, and the
-result is inserted immediately before the file path argument -- ahead of any
-of `$EDITOR`'s own arguments, so it takes effect before anything else
-`$EDITOR` might do (e.g. its own `-c` commands, if any). With no config file,
-no extra arguments are added and the cursor lands wherever the editor
-defaults to.
+`args` is shell-word split (same quoting rules as `$EDITOR` itself) and
+`{line}` is replaced with the 1-indexed line number of the seeded blank line.
+The resulting arguments are inserted immediately before the file path
+argument — ahead of any of `$EDITOR`'s own arguments, so cursor positioning
+takes effect before anything else `$EDITOR` might do (e.g. its own `-c`
+commands). A missing config file is not an error; it just means no extra
+arguments are added. The `[editor]` table leaves room for future sibling
+tables (e.g. `[search]`, `[color]`) without a breaking format change.
 
-**Open question:** should there be a way to open the editor targeted at a
-*specific* existing entry (for corrections), as opposed to only appending a new
-one? Not in the original spec, but a natural companion feature.
+## 8. Environment Variables
 
-## 6. Recommendations for Linux CLI Convention Compliance
+| Variable | Purpose |
+|---|---|
+| `EDITOR` | Editor launched by no-argument invocation (§3.2, §6); falls back to `vi` |
+| `JOURNAL_FILE` | Journal file path override (§5) |
+| `XDG_DATA_HOME` | Base directory for the default journal file location (§5) |
+| `XDG_CONFIG_HOME` | Base directory for the config file (§7) |
+| `NO_COLOR` | Disables search-term highlighting when set (§3.4.4) |
 
-The following are gaps or deviations from common Linux/POSIX CLI conventions,
-worth addressing before this is considered idiomatic:
+## 9. Exit Codes
 
-### 6.1 XDG Base Directory fallback
-Resolved — see §4. Default path is `$XDG_DATA_HOME/journal/journal.txt`,
-falling back to `~/.local/share/journal/journal.txt`, per the XDG Base
-Directory spec.
+| Code | Meaning |
+|---|---|
+| 0 | Success — entry appended/saved, `-N` printed (or the journal was empty), or a search found at least one match |
+| 1 | Runtime error (I/O failure, editor exited non-zero, etc.), or a search found no matches |
+| 2 | Usage error — an invalid flag combination, caught either by `clap` itself (e.g. `-s` combined with `-t`) or by explicit validation (e.g. `-a` without `-s`, `-N` combined with `-s`) |
 
-### 6.2 Argument parsing library
-Use [`clap`](https://docs.rs/clap) (derive API) rather than hand-rolled parsing.
-It gives you, for free:
-- POSIX/GNU-style short and long flags (`-s`/`--search`)
-- `-h/--help` and `-V/--version` (see 6.3)
-- Combined short flags, `--flag=value` syntax, `--` end-of-options marker
-- Auto-generated usage/help text and shell completion scripts
+## 10. Concurrency / Write Safety
 
-### 6.3 Standard flags currently missing
-- `-h, --help` — usage summary (expected by every Linux CLI convention)
-- `-V, --version` — print version and exit
-- Consider `-q/--quiet` and `-v/--verbose` for controlling output noise, useful
-  in scripts
+Since the journal file may be touched by multiple invocations concurrently
+(e.g. a cron job and an interactive session), writes are serialized with an
+exclusive lock (`flock`) taken on a stable sidecar file, `<path>.lock` —
+*not* on the journal file itself. This matters because editor-mode saves
+(§6) replace the journal file via an atomic rename: a lock held on the file
+being renamed away is tied to the old inode and stops protecting anything
+once the rename happens, silently reopening a lost-update race. Locking a
+sidecar path that's never renamed avoids that hazard. Both the non-editor
+append path and the editor save path take this same lock, so they serialize
+against each other correctly. The write itself is also opened in append
+(`O_APPEND`) mode as defense in depth.
 
-### 6.4 Exit codes
-Define and document exit codes per convention (0 = success, 1 = general error,
-2 = usage error, etc.), so `journal` composes cleanly in shell pipelines and
-scripts.
+## 11. Output Stream Discipline
 
-### 6.5 stdin support
-Allow entry text to be piped in (`echo "..." | journal -`), which is standard
-for Unix filter-style tools and useful for scripting entries from other
-programs.
+Journal entries and search results are written to `stdout`; errors, warnings,
+and diagnostics go to `stderr`. This allows `journal -s foo > results.txt` to
+work predictably, and keeps `journal`'s output composable in shell
+pipelines.
 
-### 6.6 Output stream discipline
-- Journal entries / search results → `stdout`
-- Errors, warnings, diagnostics → `stderr`
-This allows `journal -s foo > results.txt` to work predictably.
+## 12. Man Page / `--help`
 
-### 6.7 `NO_COLOR` / TTY detection
-If any colorized output is planned (e.g., highlighting matched search terms),
-respect the `NO_COLOR` environment variable and disable color automatically
-when stdout is not a TTY (e.g., when piped).
+`-h/--help` and `-V/--version` are provided by `clap`. A man page is checked
+in at `man/journal.1`, generated from the same flag definitions via
+`cargo run --example man` (not regenerated automatically at build time — see
+`CLAUDE.md` for the regeneration workflow).
 
-### 6.8 Concurrency / write safety
-Since this is an append-only log file potentially touched by multiple
-invocations (e.g., a cron job and an interactive user), consider:
-- File locking (`flock`) around writes, or
-- Atomic append via `O_APPEND` opened file descriptor
-to avoid interleaved writes corrupting entries.
+## 13. Possible Future Work
 
-### 6.9 Man page / `--help` completeness
-For a "proper" Linux utility, ship a `man` page (or generate one via `clap_mangen`)
-documenting the entry format, flags, and environment variables in one place.
+Not currently implemented; listed here as known gaps rather than mixed into
+the normative sections above:
 
-### 6.10 Config file (optional but idiomatic)
-**Resolved (partial):** `$XDG_CONFIG_HOME/journal/config.toml` (falling back
-to `~/.config/journal/config.toml`) is now supported, currently for one
-setting: `editor.args`, the cursor-positioning template described in §5.1.
-Further preferences (default file path, default search mode, color
-preference) are still open for future work -- the `[editor]` table structure
-leaves room to add sibling tables (e.g. `[search]`, `[color]`) later without
-a breaking format change.
-
-## 7. Consolidated Open Questions
-
-1. How multiple matching entries should be visually delimited in output.
-2. Whether search needs a result-count / pagination / `--limit` mechanism for
-   non-tag terms, given short substrings can match very broadly.
-3. Whether there should be an editor mode targeted at an existing entry (for
-   corrections), not just appending a new one.
-4. Should there be a way to list all tags in use, or list entries by date range?
-   (Not in the original spec, but common companion features for this kind of
-   tool.)
-
-## 8. Resolved Decisions Summary
-
-- Non-tag search terms: **case-insensitive, substring-matched**.
-- `@`-prefixed tag search terms: **full-word match only** (no substring
-  matching) against any `@tag` token found anywhere in the entry's body.
-- Tags are **not** a structured field: the timestamp line is always alone,
-  and `@tag` tokens are just body text recognized by shape. `-t/--tags`
-  appends its tags as their own line (auto-prefixing bare words with `@`);
-  inline tags stay exactly where they're typed. No hoisting or dedup.
-- Default file location (no `-f`, no `$JOURNAL_FILE`): **XDG data directory**
-  (`$XDG_DATA_HOME/journal/journal.txt`, falling back to
-  `~/.local/share/journal/journal.txt`).
-- Running `journal` with **no arguments** opens the file in `$EDITOR`
-  (fallback `vi`) via a temp buffer seeded with a new timestamp line and a
-  blank line after it (plus a pre-seeded `-t/--tags` line, if given); the
-  timestamp is only persisted to the real journal file on save, never written
-  ahead of time.
-- Cursor positioning on that blank line is **opt-in via config**
-  (`$XDG_CONFIG_HOME/journal/config.toml`'s `editor.args`, with a `{line}`
-  placeholder), since no single flag positions the cursor across every
-  editor. No config means no extra arguments and no positioning.
+1. An editor mode targeted at an existing entry, for corrections — currently
+   the no-argument editor flow only ever appends a new entry.
+2. A way to list all tags in use, or list/filter entries by date range.
