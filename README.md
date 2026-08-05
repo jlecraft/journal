@@ -30,6 +30,10 @@ slept 7 hours
   directory, in that order
 - Concurrency-safe: locked writes so a cron job and an interactive session
   can't corrupt each other's entries
+- `-v/--verbose` prints diagnostics (resolved file, lock status, editor
+  invocation) to stderr only, without touching stdout output you might pipe
+- Interrupting the editor flow (`Ctrl-C`) cleans up its temporary edit
+  buffer instead of leaking it
 - Standard Unix CLI conventions: proper exit codes, stdin support (`-`),
   stdout/stderr discipline, `-h/--help`, `-V/--version`, a man page
 
@@ -102,7 +106,9 @@ journal -t "sleep"
 ```
 
 The real journal file is only touched if you actually save -- aborting the
-editor (`:q!`, or exiting without writing) leaves it untouched.
+editor (`:q!`, or exiting without writing) leaves it untouched. Interrupting
+the editor itself (`Ctrl-C`) is handled the same way: the temporary edit
+buffer is removed and the real journal file is left untouched.
 
 Positioning the cursor requires an editor-specific command-line flag (vi/vim
 and friends use `+N`; GUI editors vary), so there's no single default that
@@ -151,6 +157,19 @@ journal -3
 
 Prints the 3 most recent entries, oldest to newest (like `tail`). Can't be
 combined with entry text, `-t/--tags`, or `-s/--search`.
+
+### Diagnostics
+
+```sh
+journal -v "test entry"       # prints resolved file, lock status, etc. to stderr
+journal -v -s foo
+```
+
+`-v/--verbose` prints diagnostic information -- the resolved journal file,
+lock acquisition/release, and (in editor mode) the resolved `$EDITOR`
+command and save/abort outcome -- to stderr only, so it never mixes into
+stdout output you might be piping elsewhere. It can be combined with any
+other mode.
 
 ### Journal file location
 
@@ -217,6 +236,7 @@ instead -- so check your editor's documentation for its equivalent flag.
 | 0    | Success (entry appended/saved, or search found a match) |
 | 1    | Runtime error, or a search found no matches           |
 | 2    | Usage error (invalid flags/arguments)                 |
+| 130  | Editor flow interrupted (`Ctrl-C`/`SIGINT`/`SIGTERM`); the temporary edit buffer is cleaned up before exiting |
 
 ## Entry format
 

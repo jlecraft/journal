@@ -68,6 +68,8 @@ this pre-parse step or with each other (e.g. `-a`/`--limit`/`-L` all require
   `rename`, and a lock held on a file being renamed away is tied to the old
   inode and stops protecting anything. `append_entry` and editor mode's save
   both go through this same lock so they serialize against each other.
+  `with_exclusive_lock`/`append_entry` both take a `verbose: bool` for
+  `-v/--verbose`'s lock-acquire/release diagnostics.
 - `editor.rs` — the no-argument "open `$EDITOR`" flow. Seeds a temp file
   (existing content + a fresh timestamp header + a blank line for the
   cursor, optionally a pre-seeded tags line), diffs mtime before/after the
@@ -75,7 +77,13 @@ this pre-parse step or with each other (e.g. `-a`/`--limit`/`-L` all require
   atomically replaces the journal file with `tempfile::persist`. Only the
   newly-composed entry (found via `Entry::last_entry_start`) gets
   re-normalized on save — everything before it is left byte-for-byte as the
-  user last had it.
+  user last had it. Right after the temp file is created, registers a
+  `ctrlc` handler (the one dependency in this codebase pulled in for
+  something that genuinely can't be hand-rolled in stable Rust) that
+  removes it and exits `130` on `SIGINT`/`SIGTERM` — otherwise the file
+  would leak, since Rust's default signal disposition terminates the
+  process without running the `tempfile::NamedTempFile` `Drop` that
+  normally cleans it up.
 - `config.rs` — optional TOML config at `$XDG_CONFIG_HOME/journal/config.toml`.
   Currently one setting, `editor.args`, a shell-word-split template with a
   `{line}` placeholder for cursor positioning (editors vary — vi/vim/nano use
@@ -94,6 +102,12 @@ this pre-parse step or with each other (e.g. `-a`/`--limit`/`-L` all require
 - Tags are not a structured field anywhere — `Entry::tags()` recovers
   `@word` tokens from the body on demand by shape, wherever they happen to
   appear (typed inline, or appended as a line by `-t/--tags`).
+- Diagnostics: `-v/--verbose` is threaded as a plain `bool` parameter through
+  the `main.rs`/`storage.rs`/`editor.rs` call chains (same pattern as
+  `colorize` in `run_search`) and printed via `vlog()` (`lib.rs`), a tiny
+  stderr-only helper — no logging framework, consistent with the rest of
+  this codebase's preference for hand-rolled solutions over new dependencies
+  where one isn't structurally required.
 
 ## Testing conventions
 

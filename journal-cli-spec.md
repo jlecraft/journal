@@ -106,7 +106,8 @@ journal -s "fm radio" -L        # print only the matching lines, not full entrie
 ```
 
 `-a/--all`, `--limit`, and `-L/--lines-only` are usage errors (exit code 2)
-unless `-s/--search` is also given.
+unless `-s/--search` is also given. `-v/--verbose` (§12) has no such
+restriction — it's orthogonal to every mode in this section.
 
 #### 3.4.1 Term parsing
 
@@ -232,6 +233,18 @@ the editor process exits:
 A non-zero editor exit status is treated as a failure (nothing is persisted,
 the process exits with an error).
 
+**Interruption** (`Ctrl-C`/`SIGINT`, or `SIGTERM`) during this flow is
+handled explicitly. The temp buffer would otherwise leak: its normal cleanup
+relies on being dropped when it goes out of scope, but Rust's default signal
+disposition terminates the process immediately without running destructors.
+A signal handler, registered right after the temp file is created, removes
+it and exits with status `130` (128 + `SIGINT`, the standard convention).
+This is safe even if the signal arrives just after a successful save — by
+then the temp path has already been renamed away to become the real journal
+file, so it no longer names anything on disk and the removal is a harmless
+no-op. No other mode creates a temporary file, so no other code path
+installs a handler.
+
 **Cursor positioning** is opt-in via the config file (§7), since no single
 command-line flag positions an editor's cursor across every editor
 (vi/vim/nano use `+N`; GUI editors vary). With no config, no extra arguments
@@ -274,6 +287,7 @@ tables (e.g. `[search]`, `[color]`) without a breaking format change.
 | 0 | Success — entry appended/saved, `-N` printed (or the journal was empty), or a search found at least one match |
 | 1 | Runtime error (I/O failure, editor exited non-zero, etc.), or a search found no matches |
 | 2 | Usage error — an invalid flag combination, caught either by `clap` itself (e.g. `-s` combined with `-t`) or by explicit validation (e.g. `-a` without `-s`, `-N` combined with `-s`) |
+| 130 | The no-argument editor flow was interrupted (`SIGINT`/`SIGTERM`) while composing an entry; the temporary edit buffer is removed before exiting (§6) |
 
 ## 10. Concurrency / Write Safety
 
@@ -296,14 +310,32 @@ and diagnostics go to `stderr`. This allows `journal -s foo > results.txt` to
 work predictably, and keeps `journal`'s output composable in shell
 pipelines.
 
-## 12. Man Page / `--help`
+## 12. Diagnostics (`-v/--verbose`)
+
+`-v/--verbose` prints diagnostic lines to stderr — never stdout, per §11 —
+and can be combined with any mode. Without it, a successful run is
+completely silent on stderr, the usual Unix convention. Diagnostics
+currently emitted:
+
+| When | Diagnostic |
+|---|---|
+| After resolving the journal file (§5) | `using journal file <path>` |
+| Around the sidecar lock (§10) | `acquiring lock at <path>.lock`, then `lock released` |
+| After appending an entry | `appended entry at <timestamp>` |
+| Editor mode: temp buffer created | `editing via temp file <path>` |
+| Editor mode: launching `$EDITOR` | `launching editor: <program> <args>` |
+| Editor mode: outcome | `editor exited without saving changes`, or `entry saved` |
+| `-N` | `<total> entries in journal, printing last <n>` |
+| `-s/--search` (either mode) | `<n> entries matched` |
+
+## 13. Man Page / `--help`
 
 `-h/--help` and `-V/--version` are provided by `clap`. A man page is checked
 in at `man/journal.1`, generated from the same flag definitions via
 `cargo run --example man` (not regenerated automatically at build time — see
 `CLAUDE.md` for the regeneration workflow).
 
-## 13. Possible Future Work
+## 14. Possible Future Work
 
 Not currently implemented; listed here as known gaps rather than mixed into
 the normative sections above:
