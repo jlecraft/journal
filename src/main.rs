@@ -1,10 +1,10 @@
-use std::io::{IsTerminal, Read};
+use std::io::Read;
 use std::path::Path;
 
 use anyhow::{Context, Result};
 use journal::cli::Cli;
-use journal::entry::Entry;
-use journal::{editor, entry, search, storage, vlog};
+use journal::entry::{DisplayOpts, Entry};
+use journal::{config, editor, entry, search, storage, vlog};
 
 fn main() {
     let cli = Cli::parse_args();
@@ -24,13 +24,30 @@ fn main() {
 fn run(cli: Cli) -> Result<i32> {
     let path = storage::resolve_path(cli.file.as_deref())?;
     vlog(cli.verbose, format!("using journal file {}", path.display()));
+    let config = config::load()?;
+
+    let colorize = resolve_colorize(&cli, &config);
+    let display_opts = DisplayOpts {
+        human: cli.human,
+        format: &config.timestamp.format,
+        diff: config.timestamp.diff,
+    };
 
     if let Some(query) = &cli.search {
-        return run_search(&path, query, cli.all, cli.limit, cli.lines_only, cli.verbose);
+        return run_search(
+            &path,
+            query,
+            cli.all,
+            cli.limit,
+            cli.lines_only,
+            cli.verbose,
+            colorize,
+            &display_opts,
+        );
     }
 
     if let Some(n) = cli.last {
-        return run_last(&path, n, cli.verbose);
+        return run_last(&path, n, cli.verbose, &display_opts);
     }
 
     match cli.text {
@@ -77,7 +94,7 @@ fn append(path: &Path, text: &str, tags_flag: Option<&str>, verbose: bool) -> Re
 /// Prints the last `n` entries in the journal (oldest to newest, same as
 /// `tail`), or fewer if the journal has less than `n` entries. An empty
 /// journal is not an error: nothing is printed and the exit code is 0.
-fn run_last(path: &Path, n: usize, verbose: bool) -> Result<i32> {
+fn run_last(path: &Path, n: usize, verbose: bool, display_opts: &DisplayOpts) -> Result<i32> {
     let contents = storage::read_contents(path)?;
     let entries = Entry::parse_all(&contents);
     let start = entries.len().saturating_sub(n);
@@ -92,14 +109,33 @@ fn run_last(path: &Path, n: usize, verbose: bool) -> Result<i32> {
 
     let mut out = String::new();
     for e in &entries[start..] {
-        out.push_str(&e.display());
+        out.push_str(&e.display(display_opts));
     }
     print!("{out}");
     Ok(0)
 }
 
+/// Resolves whether search-term highlighting is enabled. `NO_COLOR`, if
+/// set, always disables it, taking precedence over --color and config.
+/// Otherwise: --no-color -> false; --color -> true; else
+/// config.color.enabled. Unlike the old auto-TTY gate this is now purely
+/// opt-in -- --color colors piped output too, like `grep --color=always`.
+fn resolve_colorize(cli: &Cli, config: &config::Config) -> bool {
+    if std::env::var_os("NO_COLOR").is_some() {
+        return false;
+    }
+    if cli.no_color {
+        return false;
+    }
+    if cli.color {
+        return true;
+    }
+    config.color.enabled
+}
+
 /// Returns the process exit code: 0 if at least one entry matched, 1 if
 /// none did (grep-style; see §6.4 exit code convention).
+#[allow(clippy::too_many_arguments)]
 fn run_search(
     path: &Path,
     query: &str,
@@ -107,17 +143,12 @@ fn run_search(
     limit: Option<usize>,
     lines_only: bool,
     verbose: bool,
+    colorize: bool,
+    display_opts: &DisplayOpts,
 ) -> Result<i32> {
     let contents = storage::read_contents(path)?;
     let entries = Entry::parse_all(&contents);
     let opts = search::SearchOptions { all, limit };
-
-    // Color matched terms like `grep --color=auto`: only when stdout is an
-    // interactive terminal and NO_COLOR isn't set (https://no-color.org).
-    // Piped output (a file, `less`, or a Markdown renderer like `bat` --
-    // see Entry::display's doc comment) is never a terminal here, so it
-    // stays plain text and never collides with a renderer's own coloring.
-    let colorize = std::io::stdout().is_terminal() && std::env::var_os("NO_COLOR").is_none();
 
     if lines_only {
         let results = search::search_lines(&entries, query, &opts);
@@ -128,7 +159,7 @@ fn run_search(
 
         let mut out = String::new();
         for (e, lines) in &results {
-            let mut block = e.display_header();
+            let mut block = e.display_header(display_opts);
             for line in lines {
                 block.push_str(line);
                 block.push('\n');
@@ -148,7 +179,7 @@ fn run_search(
 
     let mut out = String::new();
     for e in &matches {
-        out.push_str(&colorized(e.display(), query, colorize));
+        out.push_str(&colorized(e.display(display_opts), query, colorize));
     }
     print!("{out}");
     Ok(0)

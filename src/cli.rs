@@ -7,7 +7,8 @@ use clap::Parser;
     name = "journal",
     version,
     about,
-    after_help = "Show the last N entries with -N, e.g. `journal -3` prints the 3 most recent entries."
+    after_help = "Show the last N entries with -N, e.g. `journal -3` prints the 3 most recent entries.",
+    disable_help_flag = true
 )]
 pub struct Cli {
     /// Entry text to append. @tags may appear anywhere in the text and
@@ -71,6 +72,30 @@ pub struct Cli {
     /// combined with any other mode.
     #[arg(short = 'v', long = "verbose")]
     pub verbose: bool,
+
+    /// Show timestamps in human-readable form: [timestamp].format from
+    /// config.toml (default "%Y-%m-%d %H:%M") plus an elapsed-time
+    /// annotation controlled by [timestamp].diff -- "disabled" (none),
+    /// "short" (e.g. "3h, 1m"; the default), or "long" (e.g. "3 hours, 1
+    /// minute ago"). Without this flag, timestamps print exactly as
+    /// stored on disk, with no annotation.
+    #[arg(short = 'h', long = "human")]
+    pub human: bool,
+
+    /// Highlight matched search terms in ANSI color, even when stdout
+    /// isn't a terminal (like `grep --color=always`). Without this or
+    /// --no-color, falls back to [color].enabled in config.toml (default
+    /// off). NO_COLOR, if set, always wins over both.
+    #[arg(long = "color", conflicts_with = "no_color")]
+    pub color: bool,
+
+    /// Never highlight matched search terms, overriding [color].enabled.
+    #[arg(long = "no-color")]
+    pub no_color: bool,
+
+    /// Print help.
+    #[arg(long = "help", action = clap::ArgAction::Help)]
+    help: Option<bool>,
 }
 
 impl Cli {
@@ -226,6 +251,10 @@ mod tests {
             limit: None,
             lines_only: false,
             verbose: false,
+            human: false,
+            color: false,
+            no_color: false,
+            help: None,
         };
         assert!(cli.validate().is_err());
     }
@@ -242,6 +271,10 @@ mod tests {
             limit: None,
             lines_only: false,
             verbose: false,
+            human: false,
+            color: false,
+            no_color: false,
+            help: None,
         };
         assert!(cli.validate().is_err());
     }
@@ -258,6 +291,10 @@ mod tests {
             limit: None,
             lines_only: false,
             verbose: false,
+            human: false,
+            color: false,
+            no_color: false,
+            help: None,
         };
         assert!(cli.validate().is_ok());
     }
@@ -274,6 +311,10 @@ mod tests {
             limit: None,
             lines_only: true,
             verbose: false,
+            human: false,
+            color: false,
+            no_color: false,
+            help: None,
         };
         assert!(cli.validate().is_err());
     }

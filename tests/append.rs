@@ -7,7 +7,7 @@ fn cmd() -> Command {
     // Isolate from the real environment/XDG default in every test.
     cmd.env_remove("JOURNAL_FILE")
         .env_remove("XDG_DATA_HOME")
-        .env_remove("XDG_CONFIG_HOME");
+        .env("XDG_CONFIG_HOME", tempfile::tempdir().unwrap().keep());
     cmd
 }
 

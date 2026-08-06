@@ -228,6 +228,7 @@ mod tests {
             editor: EditorConfig {
                 args: Some("+{line}".to_string()),
             },
+            ..Default::default()
         };
         assert_eq!(cursor_positioning_args(&config, 5).unwrap(), vec!["+5"]);
     }
@@ -238,6 +239,7 @@ mod tests {
             editor: EditorConfig {
                 args: Some("+{line} -c startinsert".to_string()),
             },
+            ..Default::default()
         };
         assert_eq!(
             cursor_positioning_args(&config, 3).unwrap(),

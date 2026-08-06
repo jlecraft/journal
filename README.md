@@ -26,6 +26,10 @@ slept 7 hours
   AND/OR term combining, a result limit, and an optional lines-only view
   (`-L`) that prints just the matching lines under each entry's header
 - Show the last N entries with `-N` (e.g. `journal -3`)
+- Plain, exact timestamps by default; `-h/--human` switches to a
+  configurable formatted date with an optional elapsed-time annotation
+- Search-term highlighting is opt-in (`--color`/`[color].enabled`), never
+  auto-detected -- piped output looks the same as terminal output
 - Journal file location resolved via `-f`, `$JOURNAL_FILE`, or the XDG data
   directory, in that order
 - Concurrency-safe: locked writes so a cron job and an interactive session
@@ -112,8 +116,8 @@ buffer is removed and the real journal file is left untouched.
 
 Positioning the cursor requires an editor-specific command-line flag (vi/vim
 and friends use `+N`; GUI editors vary), so there's no single default that
-works everywhere. See [Editor configuration](#editor-configuration) below to
-set it up for your `$EDITOR`.
+works everywhere. See [Editor cursor positioning](#editor-cursor-positioning)
+below to set it up for your `$EDITOR`.
 
 ### Search
 
@@ -145,9 +149,20 @@ Combined with `-a/--all`, `-L` requires both terms on the *same* line to
 qualify -- stricter than plain `-a`, which is satisfied if the terms are
 spread across different lines anywhere in the entry.
 
-Matched terms are highlighted (bold red, like `grep --color`) whenever
-stdout is an interactive terminal; piped output (a file, `less`, a Markdown
-renderer like `bat`) stays plain text, and `NO_COLOR` disables it too.
+Matched terms can be highlighted (bold red, like `grep --color`), but it's
+off by default -- pass `--color` to turn it on for one run:
+
+```sh
+journal -s "fm radio" --color        # highlight matches, even if piped
+journal -s "fm radio" --color | less -R
+journal -s "fm radio" --no-color     # force it off, overriding config
+```
+
+`--color`/`--no-color` are mutually exclusive. With neither passed, the
+default comes from `[color].enabled` in config.toml (see Configuration
+below), itself defaulting to off. `NO_COLOR`, if set, always wins over
+both. Unlike some tools, `--color` colors piped output too -- it's an
+explicit request, not an auto-detected terminal capability.
 
 ### Show the last N entries
 
@@ -157,6 +172,61 @@ journal -3
 
 Prints the 3 most recent entries, oldest to newest (like `tail`). Can't be
 combined with entry text, `-t/--tags`, or `-s/--search`.
+
+### Timestamp display
+
+By default, every header shows the timestamp exactly as it's stored on
+disk, with no age annotation:
+
+```
+### 2026-07-28.14:03:00
+124/80/55 @bp @health
+```
+
+Pass `-h/--human` for a friendlier, configurable rendering instead:
+
+```sh
+journal -3 -h
+journal -s "@bp" -h
+```
+
+```
+### 2026-07-28 14:03 (3d, 4h)
+124/80/55 @bp @health
+```
+
+The date comes from `[timestamp].format` in config.toml (a standard
+strftime template -- see Configuration below). The parenthesized part is
+controlled by `[timestamp].diff`, one of three preset styles rather than a
+free-form template:
+
+| `diff` value | Behavior | Example |
+|---|---|---|
+| `disabled` | No annotation at all -- just the date | `### 2026-07-28 14:03` |
+| `short` (default) | At most the 2 highest-order units from the first non-zero one, abbreviated, no direction word | `3d, 4h` |
+| `long` | At most the 3 highest-order units from the first non-zero one, spelled out, with a trailing direction word | `3 days, 4 hours ago` |
+
+Both styles pick units the same way: find the highest non-zero unit
+(years/months/days/hours/minutes/seconds) and anchor a fixed-size window
+there -- 2 units wide for `short`, 3 for `long`. Units outside that window
+never appear, no matter how many of the window's own units turn out to be
+zero; units *inside* the window that happen to be zero are just dropped
+from the output, without hiding a non-zero unit elsewhere in the same
+window. So `4 years, 0 months, 7 days` (window = years/months/days) shows
+as `4 years, 7 days`, while `29 days, 0 hours, 0 minutes, 10 seconds`
+(window = days/hours/minutes for `long`) shows as `29 days` -- the
+non-zero seconds sits past the window's edge and is never reached.
+
+More examples (elapsed time -> `long` -> `short`):
+
+| Elapsed | `long` | `short` |
+|---|---|---|
+| 30 seconds | `30 seconds ago` | `30s` |
+| 15 min, 22 sec | `15 minutes, 22 seconds ago` | `15m, 22s` |
+| 3 hr, 1 min, 16 sec | `3 hours, 1 minute, 16 seconds ago` | `3h, 1m` |
+
+See `journal-cli-spec.md` §4 for the full rationale (why exact-by-default,
+why `diff` is a preset rather than a template).
 
 ### Diagnostics
 
@@ -180,21 +250,42 @@ Resolved in this order:
 3. `$XDG_DATA_HOME/journal/journal.txt`, falling back to
    `~/.local/share/journal/journal.txt`
 
-### Editor configuration
+### Configuration
 
-`journal`'s no-argument mode seeds a blank line for the cursor to land on,
-but *moving* the cursor there requires a command-line flag specific to your
-`$EDITOR` -- there's no flag that works across every editor, so it's opt-in
-via a config file at `$XDG_CONFIG_HOME/journal/config.toml` (falling back to
+`journal` reads an optional config file at
+`$XDG_CONFIG_HOME/journal/config.toml` (falling back to
 `~/.config/journal/config.toml`):
 
 ```toml
 # ~/.config/journal/config.toml
 [editor]
 args = "+{line}"
+
+[color]
+enabled = false
+
+[timestamp]
+format = "%Y-%m-%d %H:%M"
+diff = "short"
 ```
 
-`args` is parsed with the same shell-word splitting as `$EDITOR` itself
+A missing file, or one that only sets some of these, is not an error --
+anything unspecified falls back to the default shown above.
+
+`[color].enabled` sets the default for search-term highlighting (see
+Search above) when neither `--color` nor `--no-color` is passed.
+
+`[timestamp].format` and `[timestamp].diff` control `-h/--human`'s output
+(see Timestamp display above) -- `format` is a standard `strftime`/chrono
+template applied to the entry's own timestamp; `diff` selects
+`disabled`/`short`/`long`, the elapsed-time annotation's verbosity.
+
+#### Editor cursor positioning
+
+`journal`'s no-argument mode seeds a blank line for the cursor to land on,
+but *moving* the cursor there requires a command-line flag specific to your
+`$EDITOR` -- there's no flag that works across every editor, so it's opt-in
+via `[editor].args` above. `args` is parsed with the same shell-word splitting as `$EDITOR` itself
 (quoting works the same way), and `{line}` is replaced with the 1-indexed
 line number of the blank line where you should start typing. The resulting
 arguments are inserted right before the file path, ahead of anything else in
@@ -227,7 +318,8 @@ instead -- so check your editor's documentation for its equivalent flag.
 | `EDITOR`          | Editor launched by no-argument invocation (falls back to `vi`) |
 | `JOURNAL_FILE`     | Journal file path (see resolution order above)       |
 | `XDG_DATA_HOME`    | Base directory for the default journal file location |
-| `XDG_CONFIG_HOME`  | Base directory for the config file (see Editor configuration) |
+| `XDG_CONFIG_HOME`  | Base directory for the config file (see Configuration) |
+| `NO_COLOR`         | Disables search-term highlighting, overriding `--color` and `[color].enabled` too |
 
 ## Exit codes
 

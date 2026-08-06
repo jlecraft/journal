@@ -154,10 +154,18 @@ line; `--limit N` still caps the number of entries (not lines) printed.
 
 Matched terms are wrapped in ANSI bold-red (`grep`'s default match style)
 wherever they appear in the printed output, in both whole-entry and
-lines-only mode. Highlighting is applied only when stdout is an interactive
-terminal and the `NO_COLOR` environment variable is unset — piped output (a
-file, `less`, a Markdown renderer like `bat`) is always plain text, so raw
-ANSI escapes never collide with a downstream renderer's own coloring.
+lines-only mode — but only when highlighting is turned on. Highlighting is
+strictly opt-in, matching this tool's plain-by-default posture: piped output
+is colored exactly the same as terminal output, there's no auto-detection.
+Resolution order, highest precedence first:
+
+1. `NO_COLOR` environment variable set → highlighting is always off,
+   regardless of `--color`/config (https://no-color.org).
+2. `--no-color` → off.
+3. `--color` → on, even when stdout isn't a terminal (like `grep
+   --color=always`) — piping `journal -s foo --color | less -R` colors the
+   pager's input on purpose.
+4. Neither flag → `[color].enabled` from config.toml (§7), default `false`.
 
 #### 3.4.5 Exit status
 
@@ -168,30 +176,97 @@ same convention as `grep`. A search that finds at least one match exits `0`.
 
 Search results (§3.4) and `-N` output (§3.3) use a different rendering than
 the on-disk format (§2): the header is reformatted as a Markdown ATX heading
-with a relative-age annotation, rather than the on-disk `[...]` bracket form:
+rather than the on-disk `[...]` bracket form. An ATX heading (`###`), rather
+than a `>` blockquote, has no Markdown lazy continuation, so a renderer like
+`bat` colors only the header line and not the body line that follows it.
+
+**By default**, the heading shows the timestamp exactly as stored on disk —
+an unmodified echo of §2's `TIMESTAMP_FMT`, with no age annotation:
 
 ```
-### 2026-07-28 14:03:00 (12 days ago)
+### 2026-07-28.14:03:00
 124/80/55 @bp @health
 
 ```
 
-An ATX heading (`###`), rather than a `>` blockquote, has no Markdown lazy
-continuation, so a renderer like `bat` colors only the header line and not
-the body line that follows it. The relative-age phrase is computed against
-the current time:
+This is a deliberate design choice: default output should be an exact,
+undecorated view of what's actually on disk, consistent with this tool's
+plain-by-default posture (§3.4.4 makes the same choice for color) — useful
+for scripting, diffing, or just trusting that what you see is what's
+stored.
 
-| Elapsed | Phrase |
+**With `-h`/`--human`**, the heading instead shows a configured date,
+optionally followed by an elapsed-time annotation:
+
+```
+### 2026-07-28 14:03 (3d, 4h)
+124/80/55 @bp @health
+
+```
+
+The date comes from `[timestamp].format` in config.toml (§7): a standard
+`chrono`/`strftime` template applied directly to the entry's own timestamp
+— any of the usual `%Y`, `%m`, `%d`, `%H`, `%M`, `%S`, `%A`, `%B`, etc.
+directives work. Validated at config-load time: an unrecognized directive
+is a config error, not a runtime crash. Default: `%Y-%m-%d %H:%M`.
+
+The parenthesized annotation is controlled by `[timestamp].diff`, one of
+three keywords — not a user-authored template. It's a preset choice of
+*whether* an annotation shows up at all, and how verbose it is, not
+free-form formatting:
+
+| `diff` value | Behavior |
 |---|---|
-| < 1 minute | `just now` |
-| < 1 hour | `N minute(s) ago` |
-| < 1 day | `N hour(s) ago` |
-| < 90 days | `N day(s) ago` (raw day count, no week rounding) |
-| < 1 year | `N month(s) ago` |
-| ≥ 1 year | `N year(s) ago` |
+| `disabled` | No annotation at all — just the date, no parens. |
+| `short` (default) | At most the two highest-order units starting from the first non-zero one, abbreviated, no direction word: `3d, 4h`. |
+| `long` | At most the three highest-order units starting from the first non-zero one, spelled out and pluralized, with a trailing direction word: `3 days, 4 hours ago`. |
 
-A postdated (future) timestamp uses `in N unit(s)` instead of `N unit(s)
-ago`, collapsing to `just now` within one minute either direction.
+Both styles are built from the same underlying elapsed-time breakdown: the
+total elapsed time between the entry and now, cascaded into years, months,
+days, hours, minutes, and seconds using real calendar arithmetic -- actual
+month lengths and leap years, not a fixed-length approximation (e.g. an
+entry from exactly one calendar year and one day ago always shows `1 year,
+1 day`, regardless of whether that year happened to be a leap year). The
+unit selection rule is the same for both styles, differing only in the
+window size and how units are worded:
+
+1. Find the highest-order unit that's non-zero (skipping any leading zero
+   units — e.g. `years`/`months` being zero for a recent entry). This
+   anchors a fixed-size window: 2 units wide for `short`, 3 for `long`,
+   starting at that unit and running downward (e.g. an anchor of `days`
+   with a 3-unit window covers `days`/`hours`/`minutes`, and nothing else
+   — never `seconds`).
+2. Within that window, zero units are dropped from the output — but a zero
+   unit in the *middle* of the window doesn't hide a non-zero unit later
+   in the *same* window. `4 years, 0 months, 7 days` (window =
+   years/months/days) shows as `4 years, 7 days`, not just `4 years`.
+3. A non-zero unit *outside* the window never appears, no matter how few
+   of the window's own units turn out non-zero. `29 days, 0 hours, 0
+   minutes, 10 seconds` with a 3-unit window anchored at `days` only ever
+   considers `days`/`hours`/`minutes`; the non-zero `seconds` past the
+   window's edge is never reached, so this displays as `29 days`, not `29
+   days, 10 seconds`. Put another way: a non-zero value earns a spot
+   *inside* the window, never an extension of it.
+4. If every unit is zero, fall back to `0 seconds`, so there's always
+   something to show.
+
+`long` mode ends with a trailing direction word — `ago` for a past
+timestamp, `from now` for a future one (e.g. a backdated/postdated entry).
+`short` mode has no direction word at all, by design — it's meant to be
+compact, not fully self-describing. Examples (elapsed time → `long` →
+`short`):
+
+| Elapsed | `long` | `short` |
+|---|---|---|
+| 30 seconds | `30 seconds ago` | `30s` |
+| 15 min, 22 sec | `15 minutes, 22 seconds ago` | `15m, 22s` |
+| 3 hr, 1 min, 16 sec | `3 hours, 1 minute, 16 seconds ago` | `3h, 1m` |
+| 24 days, 13 hours, 1 min | `24 days, 13 hours, 1 minute ago` | `24d, 13h` |
+| 29 days, 10 sec | `29 days ago` | `29d` |
+
+Note the last row: the trailing 10 seconds never appears in either style,
+per rule 2 above — `hours` is zero right after `days`, so the run stops
+there.
 
 ## 5. File Location Resolution
 
@@ -254,21 +329,45 @@ are passed and the cursor lands wherever the editor defaults to.
 
 An optional TOML file at `$XDG_CONFIG_HOME/journal/config.toml` (falling
 back to `~/.config/journal/config.toml`, same resolution as §5) configures
-editor cursor positioning:
+editor cursor positioning, default highlighting, and `-h/--human` display:
 
 ```toml
 [editor]
 args = "+{line}"
+
+[color]
+enabled = false
+
+[timestamp]
+format = "%Y-%m-%d %H:%M"
+diff = "short"
 ```
 
-`args` is shell-word split (same quoting rules as `$EDITOR` itself) and
-`{line}` is replaced with the 1-indexed line number of the seeded blank line.
-The resulting arguments are inserted immediately before the file path
-argument — ahead of any of `$EDITOR`'s own arguments, so cursor positioning
-takes effect before anything else `$EDITOR` might do (e.g. its own `-c`
-commands). A missing config file is not an error; it just means no extra
-arguments are added. The `[editor]` table leaves room for future sibling
-tables (e.g. `[search]`, `[color]`) without a breaking format change.
+`[editor].args` is shell-word split (same quoting rules as `$EDITOR`
+itself) and `{line}` is replaced with the 1-indexed line number of the
+seeded blank line. The resulting arguments are inserted immediately before
+the file path argument — ahead of any of `$EDITOR`'s own arguments, so
+cursor positioning takes effect before anything else `$EDITOR` might do
+(e.g. its own `-c` commands).
+
+`[color].enabled` sets the default for search-term highlighting (§3.4.4)
+when neither `--color` nor `--no-color` is passed. Default `false`: color
+is opt-in, not assumed, matching this tool's plain-by-default posture — a
+user who wants highlighting everywhere flips this once, rather than typing
+`--color` on every invocation.
+
+`[timestamp].format` and `[timestamp].diff` control `-h/--human`'s display
+(§4) — `format` is a `strftime` template for the date, `diff` is one of
+`disabled`/`short`/`long` selecting the elapsed-time annotation's verbosity
+(not a user-authored template — see §4 for why). Defaulting to an exact,
+unmodified echo of the on-disk timestamp (§4) rather than some baked-in
+"friendly" format means the config's defaults only ever take effect when
+the user has explicitly opted into human-formatted output — nothing
+changes for scripts or pipelines that never pass `-h`.
+
+A missing config file is not an error, nor is a config file that only sets
+some of these tables/keys — everything not specified falls back to its
+documented default, table by table and key by key.
 
 ## 8. Environment Variables
 
@@ -278,7 +377,7 @@ tables (e.g. `[search]`, `[color]`) without a breaking format change.
 | `JOURNAL_FILE` | Journal file path override (§5) |
 | `XDG_DATA_HOME` | Base directory for the default journal file location (§5) |
 | `XDG_CONFIG_HOME` | Base directory for the config file (§7) |
-| `NO_COLOR` | Disables search-term highlighting when set (§3.4.4) |
+| `NO_COLOR` | Disables search-term highlighting when set, overriding `--color` and `[color].enabled` too (§3.4.4) |
 
 ## 9. Exit Codes
 
@@ -330,10 +429,13 @@ currently emitted:
 
 ## 13. Man Page / `--help`
 
-`-h/--help` and `-V/--version` are provided by `clap`. A man page is checked
-in at `man/journal.1`, generated from the same flag definitions via
-`cargo run --example man` (not regenerated automatically at build time — see
-`CLAUDE.md` for the regeneration workflow).
+`--help` and `-V/--version` are provided by `clap`. Note that `-h` is *not*
+`--help` here — it's repurposed for `-h/--human` (§4), so `clap`'s usual
+automatic `-h` short flag for help is disabled and `--help` only has a long
+form. A man page is checked in at `man/journal.1`, generated from the same
+flag definitions via `cargo run --example man` (not regenerated
+automatically at build time — see `CLAUDE.md` for the regeneration
+workflow).
 
 ## 14. Possible Future Work
 
@@ -343,3 +445,19 @@ the normative sections above:
 1. An editor mode targeted at an existing entry, for corrections — currently
    the no-argument editor flow only ever appends a new entry.
 2. A way to list all tags in use, or list/filter entries by date range.
+3. Config-driven defaults for more flags, generalizing the precedent
+   `[color].enabled` (§7) already sets. Of the three standard Unix ways to
+   make a command always run with certain flags — a shell alias, a
+   program-parsed environment variable (e.g. `less`'s `LESS`, POSIX
+   `MAKEFLAGS`), or a per-user rc/config file (e.g. `~/.curlrc`,
+   `~/.wgetrc`) — the config-file approach is the right fit here, since
+   `journal` already has one, it's inherited by non-interactive contexts
+   (scripts, cron) unlike a shell alias, and it avoids the shell-quoting
+   hazards an env-var-of-flags approach is prone to (see GNU grep's now
+   removed `GREP_OPTIONS`). Candidates if pursued: `[defaults].human`
+   (default `-h/--human` on), `[defaults].all` (default `-a/--all` on for
+   searches), `[search].limit` (a default `--limit`). Not implemented
+   speculatively — add only if user testing surfaces an actual need for a
+   given flag to be always-on, following the same `[table].key` shape and
+   CLI-flag-overrides-config precedence `[color].enabled` already
+   establishes.

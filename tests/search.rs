@@ -7,7 +7,7 @@ fn cmd() -> Command {
     let mut cmd = Command::cargo_bin("journal").unwrap();
     cmd.env_remove("JOURNAL_FILE")
         .env_remove("XDG_DATA_HOME")
-        .env_remove("XDG_CONFIG_HOME");
+        .env("XDG_CONFIG_HOME", tempfile::tempdir().unwrap().keep());
     cmd
 }
 
@@ -232,7 +232,7 @@ fn lines_only_prints_header_then_only_matching_lines() {
         .stdout
         .clone();
     let s = String::from_utf8(out).unwrap();
-    assert!(s.starts_with("### 2026-07-10 08:00:00 ("));
+    assert!(s.starts_with("### 2026-07-10.08:00:00\n"));
     assert!(s.contains("fm radio broadcast"));
     assert!(s.contains("reading linux kernel internals"));
     assert!(!s.contains("unrelated line about weather"));
@@ -285,45 +285,6 @@ fn lines_only_without_search_is_a_usage_error() {
         .assert()
         .failure()
         .code(2);
-}
-
-#[test]
-fn lines_only_output_has_no_color_codes_when_stdout_is_not_a_terminal() {
-    let (_dir, path) = multiline_fixture();
-    let out = cmd()
-        .arg("-f")
-        .arg(&path)
-        .args(["-s", "kernel"])
-        .arg("-L")
-        .assert()
-        .success()
-        .get_output()
-        .stdout
-        .clone();
-    let s = String::from_utf8(out).unwrap();
-    assert!(s.contains("reading linux kernel internals"));
-    assert!(!s.contains('\x1b'));
-}
-
-#[test]
-fn search_output_has_no_color_codes_when_stdout_is_not_a_terminal() {
-    // assert_cmd always captures output through a pipe, so stdout is never
-    // a TTY here -- this exercises the auto/pipe-safe gating in
-    // run_search directly, the same condition that keeps a Markdown
-    // renderer like `bat` from seeing raw ANSI escapes mixed into its input.
-    let (_dir, path) = fixture();
-    let out = cmd()
-        .arg("-f")
-        .arg(&path)
-        .args(["-s", "kernel"])
-        .assert()
-        .success()
-        .get_output()
-        .stdout
-        .clone();
-    let s = String::from_utf8(out).unwrap();
-    assert!(s.contains("linux kernel"));
-    assert!(!s.contains('\x1b'));
 }
 
 #[test]

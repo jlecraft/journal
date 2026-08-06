@@ -4,7 +4,7 @@
 .SH NAME
 journal \- A command\-line utility for appending timestamped, taggable entries to a plain\-text journal file, and searching that file by tag or keyword.
 .SH SYNOPSIS
-\fBjournal\fR [\fB\-t\fR|\fB\-\-tags\fR] [\fB\-f\fR|\fB\-\-file\fR] [\fB\-s\fR|\fB\-\-search\fR] [\fB\-a\fR|\fB\-\-all\fR] [\fB\-\-limit\fR] [\fB\-L\fR|\fB\-\-lines\-only\fR] [\fB\-v\fR|\fB\-\-verbose\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fB\-V\fR|\fB\-\-version\fR] [\fITEXT\fR] 
+\fBjournal\fR [\fB\-t\fR|\fB\-\-tags\fR] [\fB\-f\fR|\fB\-\-file\fR] [\fB\-s\fR|\fB\-\-search\fR] [\fB\-a\fR|\fB\-\-all\fR] [\fB\-\-limit\fR] [\fB\-L\fR|\fB\-\-lines\-only\fR] [\fB\-v\fR|\fB\-\-verbose\fR] [\fB\-h\fR|\fB\-\-human\fR] [\fB\-\-color\fR] [\fB\-\-no\-color\fR] [\fB\-\-help\fR] [\fB\-V\fR|\fB\-\-version\fR] [\fITEXT\fR] 
 .SH DESCRIPTION
 A command\-line utility for appending timestamped, taggable entries to a plain\-text journal file, and searching that file by tag or keyword.
 .SH OPTIONS
@@ -30,7 +30,16 @@ Print only the matching lines of each entry (with the entry\*(Aqs header above t
 \fB\-v\fR, \fB\-\-verbose\fR
 Print diagnostic information to stderr: the resolved journal file, lock acquisition/release, and editor invocation details. Can be combined with any other mode
 .TP
-\fB\-h\fR, \fB\-\-help\fR
+\fB\-h\fR, \fB\-\-human\fR
+Show timestamps in human\-readable form: [timestamp].format from config.toml (default "%Y\-%m\-%d %H:%M") plus an elapsed\-time annotation controlled by [timestamp].diff \-\- "disabled" (none), "short" (e.g. "3h, 1m"; the default), or "long" (e.g. "3 hours, 1 minute ago"). Without this flag, timestamps print exactly as stored on disk, with no annotation
+.TP
+\fB\-\-color\fR
+Highlight matched search terms in ANSI color, even when stdout isn\*(Aqt a terminal (like `grep \-\-color=always`). Without this or \-\-no\-color, falls back to [color].enabled in config.toml (default off). NO_COLOR, if set, always wins over both
+.TP
+\fB\-\-no\-color\fR
+Never highlight matched search terms, overriding [color].enabled
+.TP
+\fB\-\-help\fR
 Print help
 .TP
 \fB\-V\fR, \fB\-\-version\fR
