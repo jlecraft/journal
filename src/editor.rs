@@ -193,26 +193,26 @@ mod tests {
 
     #[test]
     fn seed_buffer_positions_cursor_on_the_blank_line_after_the_timestamp() {
-        let (seed, cursor_line) = seed_buffer("", "[2026-07-28.14:03:00]", None);
-        assert_eq!(seed, "[2026-07-28.14:03:00]\n\n");
+        let (seed, cursor_line) = seed_buffer("", "[2026-07-28 14:03:00]", None);
+        assert_eq!(seed, "[2026-07-28 14:03:00]\n\n");
         assert_eq!(cursor_line, 2);
     }
 
     #[test]
     fn seed_buffer_accounts_for_existing_content() {
-        let existing = "[2026-01-01.00:00:00]\nold\n\n"; // 3 lines
-        let (seed, cursor_line) = seed_buffer(existing, "[2026-07-28.14:03:00]", None);
+        let existing = "[2026-01-01 00:00:00]\nold\n\n"; // 3 lines
+        let (seed, cursor_line) = seed_buffer(existing, "[2026-07-28 14:03:00]", None);
         assert_eq!(
             seed,
-            "[2026-01-01.00:00:00]\nold\n\n[2026-07-28.14:03:00]\n\n"
+            "[2026-01-01 00:00:00]\nold\n\n[2026-07-28 14:03:00]\n\n"
         );
         assert_eq!(cursor_line, 5);
     }
 
     #[test]
     fn seed_buffer_pre_seeds_the_tags_line_after_the_cursor_line() {
-        let (seed, cursor_line) = seed_buffer("", "[2026-07-28.14:03:00]", Some("@bp @health"));
-        assert_eq!(seed, "[2026-07-28.14:03:00]\n\n@bp @health");
+        let (seed, cursor_line) = seed_buffer("", "[2026-07-28 14:03:00]", Some("@bp @health"));
+        assert_eq!(seed, "[2026-07-28 14:03:00]\n\n@bp @health");
         assert_eq!(cursor_line, 2);
     }
 
@@ -275,8 +275,8 @@ mod tests {
 
     #[test]
     fn finalize_buffer_collapses_trailing_blank_lines() {
-        let out = finalize_buffer("[2026-07-28.14:03:00]\nbody\n\n\n\n");
-        assert_eq!(out, "[2026-07-28.14:03:00]\nbody\n\n");
+        let out = finalize_buffer("[2026-07-28 14:03:00]\nbody\n\n\n\n");
+        assert_eq!(out, "[2026-07-28 14:03:00]\nbody\n\n");
     }
 
     #[test]
@@ -286,20 +286,20 @@ mod tests {
 
     #[test]
     fn finalize_buffer_leaves_inline_tags_in_the_body_untouched() {
-        let out = finalize_buffer("[2026-07-28.14:03:00]\nsome text @demo @another");
-        assert_eq!(out, "[2026-07-28.14:03:00]\nsome text @demo @another\n\n");
+        let out = finalize_buffer("[2026-07-28 14:03:00]\nsome text @demo @another");
+        assert_eq!(out, "[2026-07-28 14:03:00]\nsome text @demo @another\n\n");
     }
 
     #[test]
     fn finalize_buffer_leaves_earlier_entries_untouched() {
         let out = finalize_buffer(
-            "[2026-01-01.00:00:00]\nold body @old-tag\n\n\
-             [2026-07-28.14:03:00]\nnew body @demo",
+            "[2026-01-01 00:00:00]\nold body @old-tag\n\n\
+             [2026-07-28 14:03:00]\nnew body @demo",
         );
         assert_eq!(
             out,
-            "[2026-01-01.00:00:00]\nold body @old-tag\n\n\
-             [2026-07-28.14:03:00]\nnew body @demo\n\n"
+            "[2026-01-01 00:00:00]\nold body @old-tag\n\n\
+             [2026-07-28 14:03:00]\nnew body @demo\n\n"
         );
     }
 
@@ -307,5 +307,16 @@ mod tests {
     fn finalize_buffer_falls_back_to_whole_file_normalization_without_a_header() {
         let out = finalize_buffer("no header line survived editing\n\n\n");
         assert_eq!(out, "no header line survived editing\n\n");
+    }
+
+    #[test]
+    fn finalize_buffer_preserves_a_hand_edited_shorthand_timestamp_verbatim() {
+        // The whole point of raw-header preservation (Entry::render): a
+        // user who overwrote the seeded timestamp with a shorthand form
+        // before saving keeps exactly what they typed on disk -- it's
+        // never "fixed" back to full precision just because it passed
+        // through finalize_buffer.
+        let out = finalize_buffer("[2025]\nbody text");
+        assert_eq!(out, "[2025]\nbody text\n\n");
     }
 }

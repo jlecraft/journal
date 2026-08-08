@@ -18,15 +18,17 @@ by which flags are present on a single top-level command.
 ## 2. On-Disk Entry Format
 
 ```
-[YYYY-MM-DD.HH:MM:SS]
+[YYYY-MM-DD HH:MM:SS]
 Entry body, line 1
 Entry body, line 2 (optional)
 @tag1 @tag2 (optional; present only if -t/--tags was used)
 
 ```
 
-- **Header line:** a timestamp in `[YYYY-MM-DD.HH:MM:SS]` format, and nothing
-  else. The timestamp is always alone on its own line.
+- **Header line:** a timestamp in `[YYYY-MM-DD HH:MM:SS]` format, and nothing
+  else. The timestamp is always alone on its own line. This is the form the
+  tool itself always writes; a hand-typed or hand-edited header may use a
+  less precise form instead (§2.2).
 - **Body:** any number of lines, including blank lines. `@tag` tokens may
   appear anywhere in the body — there is no separate structured storage for
   tags.
@@ -52,6 +54,61 @@ No hoisting, extraction, or de-duplication occurs. `-t/--tags` bare words
 concatenated onto their own line; tokens already prefixed are left as-is.
 Inline tags typed directly in the entry text are left completely untouched —
 they're just body text that happens to match the tag shape.
+
+### 2.2 Flexible (hand-typed) timestamps
+
+A header a human hand-types or hand-edits doesn't need to be the full
+`YYYY-MM-DD HH:MM:SS` form. A date part and a time part can each be given
+or left out independently, and each has its own valid shapes:
+
+| Date shapes | Time shapes |
+|---|---|
+| `YYYY` | `HH:MM` |
+| `MM-DD` | `HH:MM:SS` |
+| `YYYY-MM-DD` | |
+
+Any combination of one date shape and one time shape is valid, including
+just a date, just a time, or (per §2) the full `YYYY-MM-DD HH:MM:SS` with
+both. When both are present, the date comes first, followed by one space
+and the time — the same separator as the on-disk format itself.
+
+Whatever isn't given is defaulted:
+
+- **No date part at all** (just a time, or nothing) → the date defaults to
+  **today**, resolved fresh every time the entry is displayed (§4), not
+  fixed at parse time. This takes priority over the next two rules — a
+  bare time like `[08:30]` gets today's actual month/day, not `01-01`.
+- **No year, but a date part was given** (the `MM-DD` shape) → the
+  **current year** is substituted, resolved fresh at display time, same
+  as above.
+- **No month/day, but a date part was given** (the `YYYY` shape) →
+  `01-01`.
+- **No seconds** (the `HH:MM` time shape) → `00`.
+- **No time part at all** → `00:00:00`.
+
+| Header | Displays as (§4) |
+|---|---|
+| `[1972]` | `1972-01-01 00:00:00` |
+| `[08-07]` | `⟨current year⟩-08-07 00:00:00` |
+| `[1972-06-15]` | `1972-06-15 00:00:00` |
+| `[1972 08:30]` | `1972-01-01 08:30:00` |
+| `[08:30]` | `⟨today⟩ 08:30:00` |
+| `[08-07 08:30]` | `⟨current year⟩-08-07 08:30:00` |
+
+Every combination resolves to a real, complete point in time, so `-h`/
+`--human` always computes an elapsed-time annotation for it (§4) — even
+when the date behind that annotation is only a stand-in, never one the
+human actually wrote down.
+
+**This flexibility is a display-time affordance only — what's on disk is
+never rewritten because of it.** The tool itself always writes the full
+`YYYY-MM-DD HH:MM:SS` form (§2) for a genuinely new entry (`journal "..."`,
+stdin, or a freshly-seeded, untouched editor timestamp), but a header that
+already exists on disk in a shorter hand-typed form — including one a human
+just edited the seeded timestamp down to before saving via editor mode
+(§3.2) — keeps that exact text forever, byte-for-byte. `journal` only ever
+*expands* a header for the reader (§4); it doesn't "fix" what was
+intentionally written by hand.
 
 ## 3. Modes of Operation
 
@@ -180,20 +237,27 @@ rather than the on-disk `[...]` bracket form. An ATX heading (`###`), rather
 than a `>` blockquote, has no Markdown lazy continuation, so a renderer like
 `bat` colors only the header line and not the body line that follows it.
 
-**By default**, the heading shows the timestamp exactly as stored on disk —
-an unmodified echo of §2's `TIMESTAMP_FMT`, with no age annotation:
+**By default**, the heading shows the entry's fully resolved timestamp in
+§2's `TIMESTAMP_FMT`, with no age annotation:
 
 ```
-### 2026-07-28.14:03:00
+### 2026-07-28 14:03:00
 124/80/55 @bp @health
 
 ```
 
-This is a deliberate design choice: default output should be an exact,
-undecorated view of what's actually on disk, consistent with this tool's
-plain-by-default posture (§3.4.4 makes the same choice for color) — useful
-for scripting, diffing, or just trusting that what you see is what's
-stored.
+For a header written exactly this way, that's an unmodified echo of what's
+on disk. But display always shows the *resolved* value (§2.2) — a
+shorthand header like `[2025]` displays as `### 2025-01-01 00:00:00`, and a
+header with no date part at all, like `[08:30]`, displays with today's
+date filled in, e.g. `### 2026-08-07 08:30:00` — even though what's
+actually sitting in the file is still just `[2025]` or `[08:30]`. Display
+is a read-only view; only §2.2's rules about how a header is *written*
+control what's ever on disk. This is a deliberate design choice: default
+output should be a plain, undecorated view of the entry, consistent with
+this tool's plain-by-default posture (§3.4.4 makes the same choice for
+color) — useful for scripting, diffing, or just reading at a glance,
+without needing `-h` for anything as basic as "what date is this."
 
 **With `-h`/`--human`**, the heading instead shows a configured date,
 optionally followed by an elapsed-time annotation:
@@ -203,6 +267,12 @@ optionally followed by an elapsed-time annotation:
 124/80/55 @bp @health
 
 ```
+
+A header missing its date, year, or both (§2.2) still gets the
+parenthesized annotation: it resolves to today's date (or, for `MM-DD`
+with no year, the current year), which is a concrete point in time to
+measure against even though it isn't the entry's actual date (one was
+never given).
 
 The date comes from `[timestamp].format` in config.toml (§7): a standard
 `chrono`/`strftime` template applied directly to the entry's own timestamp
@@ -268,6 +338,38 @@ Note the last row: the trailing 10 seconds never appears in either style,
 per rule 2 above — `hours` is zero right after `days`, so the run stops
 there.
 
+### 4.1 Suppressing the header (`--no-headers`)
+
+`--no-headers` drops the `###` heading line entirely from `-N` and search
+output (in `-L`/`--lines-only` mode, this is the per-entry header line
+printed once above that entry's matched lines), leaving just the body. It
+also drops the blank line normally used to separate consecutive entries —
+that separator is considered part of the heading-based presentation, not
+an independent thing, so suppressing the heading suppresses it too. With a
+single entry the output is just its body:
+
+```
+124/80/55 @bp @health
+```
+
+and with several printed back-to-back (e.g. `journal -3 --no-headers`),
+each entry's body runs directly into the next with no blank line between
+them — whatever separation exists is whatever blank lines happen to
+already be inside the bodies themselves.
+
+`--no-header` (singular) also works, as a `clap` `alias` rather than a
+second documented flag — it's hidden from `--help`/the man page on
+purpose, existing purely so a plausible typo of the real flag still does
+the right thing instead of erroring out. Nothing else in this codebase
+treats it as a separate flag; it maps onto the exact same `Cli::no_headers`
+field and code path as `--no-headers` itself.
+
+It composes with `-h/--human` (which becomes moot — there's no heading
+left to format) and with `--color`/highlighting (only body text is ever
+highlighted, so this doesn't interact with it). Like `-h`, this is a
+display-only flag — it has no effect on `Entry::render`'s on-disk form
+(§2).
+
 ## 5. File Location Resolution
 
 Resolved in this precedence order:
@@ -298,12 +400,14 @@ the editor process exits:
 - **No change in mtime** (e.g. `:q` or `:q!` in vim with nothing written):
   the real journal file is left completely untouched, and nothing is
   persisted.
-- **mtime changed:** the edited buffer is read back, the newly-composed
+- **mtime changed:** the edited buffer is read back, and the newly-composed
   entry (found by locating the last header line — everything before it is
-  left byte-for-byte as the user last had it) is re-normalized the same way
-  the non-editor append path normalizes trailing blank lines, and the result
-  atomically replaces the real journal file (temp file persisted over the
-  original path).
+  left byte-for-byte as the user last had it) has its trailing blank lines
+  normalized the same way the non-editor append path does. The header line
+  itself is not part of that normalization — whatever timestamp text is
+  there, canonical or hand-typed shorthand (§2.2), is kept exactly as
+  written. The result atomically replaces the real journal file (temp file
+  persisted over the original path).
 
 A non-zero editor exit status is treated as a failure (nothing is persisted,
 the process exits with an error).
@@ -359,9 +463,9 @@ user who wants highlighting everywhere flips this once, rather than typing
 `[timestamp].format` and `[timestamp].diff` control `-h/--human`'s display
 (§4) — `format` is a `strftime` template for the date, `diff` is one of
 `disabled`/`short`/`long` selecting the elapsed-time annotation's verbosity
-(not a user-authored template — see §4 for why). Defaulting to an exact,
-unmodified echo of the on-disk timestamp (§4) rather than some baked-in
-"friendly" format means the config's defaults only ever take effect when
+(not a user-authored template — see §4 for why). Defaulting to §2's plain
+`TIMESTAMP_FMT` with no age annotation (§4), rather than some baked-in
+"friendly" format, means the config's defaults only ever take effect when
 the user has explicitly opted into human-formatted output — nothing
 changes for scripts or pipelines that never pass `-h`.
 

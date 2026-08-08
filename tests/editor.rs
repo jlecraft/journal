@@ -41,7 +41,7 @@ fn commits_new_entry_when_editor_saves_changes() {
 
     let contents = fs::read_to_string(&journal_path).unwrap();
     assert!(
-        predicate::str::is_match(r"^\[\d{4}-\d{2}-\d{2}\.\d{2}:\d{2}:\d{2}\]\n")
+        predicate::str::is_match(r"^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\]\n")
             .unwrap()
             .eval(&contents)
     );
@@ -75,7 +75,7 @@ fn dash_t_flag_seeds_a_tags_line_into_the_editor_buffer() {
     // Timestamp alone on line 1, a blank line for the body, then the
     // -t tags line -- bare "beer" auto-prefixed with @.
     assert!(
-        predicate::str::is_match(r"^\[\d{4}-\d{2}-\d{2}\.\d{2}:\d{2}:\d{2}\]\n\n@beer @store$")
+        predicate::str::is_match(r"^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\]\n\n@beer @store$")
             .unwrap()
             .eval(&seeded)
     );
@@ -123,7 +123,7 @@ fn basic_entry_seeds_a_blank_line_after_the_timestamp_for_the_cursor() {
 
     let seeded = fs::read_to_string(&marker).unwrap();
     assert!(
-        predicate::str::is_match(r"^\[\d{4}-\d{2}-\d{2}\.\d{2}:\d{2}:\d{2}\]\n\n$")
+        predicate::str::is_match(r"^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\]\n\n$")
             .unwrap()
             .eval(&seeded)
     );
@@ -213,7 +213,7 @@ fn cursor_positioning_args_precede_editors_own_args() {
 fn preserves_existing_entries_above_the_new_one() {
     let dir = tempfile::tempdir().unwrap();
     let journal_path = dir.path().join("journal.txt");
-    fs::write(&journal_path, "[2026-01-01.00:00:00] @old\nold entry\n\n").unwrap();
+    fs::write(&journal_path, "[2026-01-01 00:00:00] @old\nold entry\n\n").unwrap();
     let editor = fake_editor(
         dir.path(),
         "append-editor.sh",
@@ -228,7 +228,7 @@ fn preserves_existing_entries_above_the_new_one() {
         .success();
 
     let contents = fs::read_to_string(&journal_path).unwrap();
-    assert!(contents.starts_with("[2026-01-01.00:00:00] @old\nold entry\n\n"));
+    assert!(contents.starts_with("[2026-01-01 00:00:00] @old\nold entry\n\n"));
     assert!(contents.contains("new entry text"));
 }
 
@@ -236,7 +236,7 @@ fn preserves_existing_entries_above_the_new_one() {
 fn editor_quitting_without_saving_leaves_journal_untouched() {
     let dir = tempfile::tempdir().unwrap();
     let journal_path = dir.path().join("journal.txt");
-    fs::write(&journal_path, "[2026-01-01.00:00:00]\nunchanged\n\n").unwrap();
+    fs::write(&journal_path, "[2026-01-01 00:00:00]\nunchanged\n\n").unwrap();
     let editor = fake_editor(dir.path(), "noop-editor.sh", "exit 0"); // never touches the file
 
     cmd()
@@ -248,7 +248,7 @@ fn editor_quitting_without_saving_leaves_journal_untouched() {
 
     assert_eq!(
         fs::read_to_string(&journal_path).unwrap(),
-        "[2026-01-01.00:00:00]\nunchanged\n\n"
+        "[2026-01-01 00:00:00]\nunchanged\n\n"
     );
 }
 
@@ -256,7 +256,7 @@ fn editor_quitting_without_saving_leaves_journal_untouched() {
 fn editor_failure_leaves_journal_untouched_and_reports_error() {
     let dir = tempfile::tempdir().unwrap();
     let journal_path = dir.path().join("journal.txt");
-    fs::write(&journal_path, "[2026-01-01.00:00:00]\nunchanged\n\n").unwrap();
+    fs::write(&journal_path, "[2026-01-01 00:00:00]\nunchanged\n\n").unwrap();
     let editor = fake_editor(dir.path(), "failing-editor.sh", "exit 1");
 
     cmd()
@@ -270,7 +270,7 @@ fn editor_failure_leaves_journal_untouched_and_reports_error() {
 
     assert_eq!(
         fs::read_to_string(&journal_path).unwrap(),
-        "[2026-01-01.00:00:00]\nunchanged\n\n"
+        "[2026-01-01 00:00:00]\nunchanged\n\n"
     );
 }
 

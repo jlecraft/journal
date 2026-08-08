@@ -15,7 +15,7 @@ fn cmd() -> Command {
 fn fixed_entry_fixture() -> (TempDir, std::path::PathBuf) {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("journal.txt");
-    fs::write(&path, "[2026-07-10.08:00:00]\nslept fine\n\n").unwrap();
+    fs::write(&path, "[2026-07-10 08:00:00]\nslept fine\n\n").unwrap();
     (dir, path)
 }
 
@@ -29,7 +29,7 @@ fn three_days_ago_fixture() -> (TempDir, std::path::PathBuf, chrono::NaiveDateTi
     let then = chrono::Local::now().naive_local() - chrono::Duration::days(3);
     fs::write(
         &path,
-        format!("[{}]\nslept fine\n\n", then.format("%Y-%m-%d.%H:%M:%S")),
+        format!("[{}]\nslept fine\n\n", then.format("%Y-%m-%d %H:%M:%S")),
     )
     .unwrap();
     (dir, path, then)
@@ -42,7 +42,7 @@ fn searchable_fixture() -> (TempDir, std::path::PathBuf) {
     let path = dir.path().join("journal.txt");
     fs::write(
         &path,
-        "[2026-07-10.08:00:00]\nreading linux kernel internals\n\n",
+        "[2026-07-10 08:00:00]\nreading linux kernel internals\n\n",
     )
     .unwrap();
     (dir, path)
@@ -53,7 +53,7 @@ fn default_output_shows_exact_on_disk_style_timestamp_with_no_age() {
     let (_dir, path) = fixed_entry_fixture();
     let out = cmd().arg("-f").arg(&path).arg("-1").assert().success().get_output().stdout.clone();
     let s = String::from_utf8(out).unwrap();
-    assert!(s.starts_with("### 2026-07-10.08:00:00\n"));
+    assert!(s.starts_with("### 2026-07-10 08:00:00\n"));
     assert!(!s.contains('('));
 }
 
@@ -122,6 +122,107 @@ fn human_flag_with_diff_disabled_shows_no_parens() {
         .clone();
     let s = String::from_utf8(out).unwrap();
     assert_eq!(s.lines().next().unwrap(), format!("### {}", then.format("%Y-%m-%d %H:%M")));
+}
+
+#[test]
+fn no_headers_suppresses_the_header_line_on_last_n() {
+    let (_dir, path) = fixed_entry_fixture();
+    let out = cmd()
+        .arg("-f")
+        .arg(&path)
+        .arg("-1")
+        .arg("--no-headers")
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let s = String::from_utf8(out).unwrap();
+    assert_eq!(s, "slept fine\n");
+}
+
+#[test]
+fn no_headers_drops_the_blank_line_separator_between_entries() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("journal.txt");
+    fs::write(
+        &path,
+        "[2026-07-10 08:00:00]\nfirst\n\n[2026-07-11 08:00:00]\nsecond\n\n",
+    )
+    .unwrap();
+    let out = cmd()
+        .arg("-f")
+        .arg(&path)
+        .arg("-2")
+        .arg("--no-headers")
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let s = String::from_utf8(out).unwrap();
+    assert_eq!(s, "first\nsecond\n");
+}
+
+#[test]
+fn no_headers_suppresses_the_header_line_on_search() {
+    let (_dir, path) = searchable_fixture();
+    let out = cmd()
+        .arg("-f")
+        .arg(&path)
+        .args(["-s", "kernel"])
+        .arg("--no-headers")
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let s = String::from_utf8(out).unwrap();
+    assert_eq!(s, "reading linux kernel internals\n");
+}
+
+#[test]
+fn no_headers_suppresses_the_header_line_on_lines_only() {
+    let (_dir, path) = searchable_fixture();
+    let out = cmd()
+        .arg("-f")
+        .arg(&path)
+        .args(["-s", "kernel"])
+        .arg("-L")
+        .arg("--no-headers")
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let s = String::from_utf8(out).unwrap();
+    assert_eq!(s, "reading linux kernel internals\n");
+}
+
+#[test]
+fn no_header_singular_is_a_hidden_alias_for_no_headers() {
+    let (_dir, path) = fixed_entry_fixture();
+    let out = cmd()
+        .arg("-f")
+        .arg(&path)
+        .arg("-1")
+        .arg("--no-header")
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let s = String::from_utf8(out).unwrap();
+    assert_eq!(s, "slept fine\n");
+}
+
+#[test]
+fn no_header_singular_does_not_appear_in_help_text() {
+    let out = cmd().arg("--help").assert().success().get_output().stdout.clone();
+    let s = String::from_utf8(out).unwrap();
+    assert!(s.contains("--no-headers"));
+    assert!(!s.contains("--no-header "));
+    assert!(!s.contains("--no-header\n"));
 }
 
 #[test]

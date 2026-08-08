@@ -19,15 +19,15 @@ fn fixture() -> (TempDir, std::path::PathBuf) {
     let path = dir.path().join("journal.txt");
     fs::write(
         &path,
-        "[2026-07-01.08:00:00]\n\
+        "[2026-07-01 08:00:00]\n\
          124/80/55 @bp @health\n\n\
-         [2026-07-02.09:00:00]\n\
+         [2026-07-02 09:00:00]\n\
          unrelated tag that looks similar @bph\n\n\
-         [2026-07-03.10:00:00]\n\
+         [2026-07-03 10:00:00]\n\
          reading about linux kernel internals\n\n\
-         [2026-07-04.11:00:00]\n\
+         [2026-07-04 11:00:00]\n\
          the weather this month\n\n\
-         [2026-07-05.12:00:00]\n\
+         [2026-07-05 12:00:00]\n\
          slept 7 hours, felt great @sleep\n\n",
     )
     .unwrap();
@@ -174,7 +174,7 @@ fn bare_word_and_at_prefixed_term_both_find_an_inline_tag() {
     let path = dir.path().join("journal.txt");
     fs::write(
         &path,
-        "[2026-07-06.13:00:00]\nmy @blood_pressure was 117/75/50\n\n",
+        "[2026-07-06 13:00:00]\nmy @blood_pressure was 117/75/50\n\n",
     )
     .unwrap();
 
@@ -209,7 +209,7 @@ fn multiline_fixture() -> (TempDir, std::path::PathBuf) {
     let path = dir.path().join("journal.txt");
     fs::write(
         &path,
-        "[2026-07-10.08:00:00]\n\
+        "[2026-07-10 08:00:00]\n\
          fm radio broadcast\n\
          unrelated line about weather\n\
          reading linux kernel internals\n\n",
@@ -232,7 +232,7 @@ fn lines_only_prints_header_then_only_matching_lines() {
         .stdout
         .clone();
     let s = String::from_utf8(out).unwrap();
-    assert!(s.starts_with("### 2026-07-10.08:00:00\n"));
+    assert!(s.starts_with("### 2026-07-10 08:00:00\n"));
     assert!(s.contains("fm radio broadcast"));
     assert!(s.contains("reading linux kernel internals"));
     assert!(!s.contains("unrelated line about weather"));

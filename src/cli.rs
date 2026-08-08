@@ -93,6 +93,18 @@ pub struct Cli {
     #[arg(long = "no-color")]
     pub no_color: bool,
 
+    /// Suppress the timestamp header shown above each entry (or, with
+    /// -L/--lines-only, above each matched-line block), along with the
+    /// blank line normally used to separate entries -- printed entries run
+    /// directly into each other, body to body. Has no effect on what's
+    /// stored on disk -- display only.
+    // `alias` (as opposed to `visible_alias`) is hidden from --help/the man
+    // page by default -- exactly what's wanted here: `--no-header` is kept
+    // working for anyone who types the singular out of habit, without
+    // making it look like there are two flags to choose between.
+    #[arg(long = "no-headers", alias = "no-header")]
+    pub no_headers: bool,
+
     /// Print help.
     #[arg(long = "help", action = clap::ArgAction::Help)]
     help: Option<bool>,
@@ -254,6 +266,7 @@ mod tests {
             human: false,
             color: false,
             no_color: false,
+            no_headers: false,
             help: None,
         };
         assert!(cli.validate().is_err());
@@ -274,6 +287,7 @@ mod tests {
             human: false,
             color: false,
             no_color: false,
+            no_headers: false,
             help: None,
         };
         assert!(cli.validate().is_err());
@@ -294,6 +308,7 @@ mod tests {
             human: false,
             color: false,
             no_color: false,
+            no_headers: false,
             help: None,
         };
         assert!(cli.validate().is_ok());
@@ -314,6 +329,7 @@ mod tests {
             human: false,
             color: false,
             no_color: false,
+            no_headers: false,
             help: None,
         };
         assert!(cli.validate().is_err());

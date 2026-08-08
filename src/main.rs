@@ -31,6 +31,7 @@ fn run(cli: Cli) -> Result<i32> {
         human: cli.human,
         format: &config.timestamp.format,
         diff: config.timestamp.diff,
+        header: !cli.no_headers,
     };
 
     if let Some(query) = &cli.search {
@@ -87,7 +88,7 @@ fn append(path: &Path, text: &str, tags_flag: Option<&str>, verbose: bool) -> Re
     };
     let e = Entry::now(body);
     storage::append_entry(path, &e.render(), verbose)?;
-    vlog(verbose, format!("appended entry at {}", e.timestamp.format(entry::TIMESTAMP_FMT)));
+    vlog(verbose, format!("appended entry at {}", e.timestamp.render()));
     Ok(())
 }
 
@@ -164,7 +165,9 @@ fn run_search(
                 block.push_str(line);
                 block.push('\n');
             }
-            block.push('\n');
+            if display_opts.header {
+                block.push('\n');
+            }
             out.push_str(&colorized(block, query, colorize));
         }
         print!("{out}");

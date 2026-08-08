@@ -47,12 +47,31 @@ this pre-parse step or with each other (e.g. `-a`/`--limit`/`-L` all require
 
 **Module map** (`src/lib.rs` re-exports all of these):
 - `entry.rs` — the `Entry` type and all timestamp/format logic. Two
-  serializations of the same entry: `render()` (on-disk, `[YYYY-MM-DD.HH:MM:SS]`
+  serializations of the same entry: `render()` (on-disk, `[YYYY-MM-DD HH:MM:SS]`
   header) and `display()`/`display_header()` (human-facing, `### date (age)`
   ATX heading — chosen over a blockquote so Markdown renderers like `bat`
   color only the header line, not the body). `Entry::parse_all` splits a
   whole file into entries by locating header lines, *not* blank lines,
-  because a body may legitimately contain blank lines of its own.
+  because a body may legitimately contain blank lines of its own. A header's
+  timestamp is a `Timestamp` struct, not a bare `NaiveDateTime` (see
+  `timestamps.md` for the grammar this implements): a `DateSpec` (date part
+  — `YYYY`/`MM-DD`/`YYYY-MM-DD`, or none at all) plus hour/minute/second,
+  each given or omitted independently. Missing seconds default to `00`;
+  the `YYYY` shape defaults month/day to `01-01`. Two of `DateSpec`'s four
+  variants substitute a *dynamic* value rather than a fixed default,
+  resolved fresh on every `resolved()` call rather than fixed at parse
+  time: `MonthDayOnly` (the `MM-DD` shape) substitutes the current year,
+  and `Today` (no date part at all — takes priority over defaulting
+  month/day to `01-01`) substitutes today's actual date. Either way the
+  entry always resolves to a real point in time, so it always gets a
+  `-h/--human` elapsed-time annotation, even though the substituted part
+  is only a stand-in never actually written down. This flexible parsing
+  only ever affects *display* —
+  `display_header` always shows `timestamp.resolved()` fully expanded,
+  whether or not `-h` is given — never the file: `Entry::render` writes
+  back the exact bracket-interior text an entry was parsed from
+  (`raw_header`) rather than reformatting it from `timestamp`, so a
+  hand-typed shorthand header stays shorthand on disk.
 - `search.rs` — term parsing (`@tag` = exact full-word match against
   `entry.tags()`; anything else = case-insensitive substring against the
   whole rendered entry) and two search modes: `search()` (whole-entry, for
@@ -75,9 +94,13 @@ this pre-parse step or with each other (e.g. `-a`/`--limit`/`-L` all require
   cursor, optionally a pre-seeded tags line), diffs mtime before/after the
   editor exits to detect "quit without saving" vs. a real save, then
   atomically replaces the journal file with `tempfile::persist`. Only the
-  newly-composed entry (found via `Entry::last_entry_start`) gets
-  re-normalized on save — everything before it is left byte-for-byte as the
-  user last had it. Right after the temp file is created, registers a
+  newly-composed entry (found via `Entry::last_entry_start`) gets its
+  trailing blank lines re-normalized on save — everything before it is
+  left byte-for-byte as the user last had it, and so is that entry's own
+  header line: `Entry::render` writes back whatever timestamp text it was
+  parsed from verbatim (`raw_header`), so a header a human edited down to
+  shorthand (§2.2) is never "fixed" back to full precision just because it
+  passed through save. Right after the temp file is created, registers a
   `ctrlc` handler (the one dependency in this codebase pulled in for
   something that genuinely can't be hand-rolled in stable Rust) that
   removes it and exits `130` on `SIGINT`/`SIGTERM` — otherwise the file
@@ -117,5 +140,5 @@ isolation. Integration tests in `tests/*.rs` use `assert_cmd` to invoke the
 built binary against a `tempfile::TempDir` journal file, one file per
 behavior area (`append.rs`, `editor.rs`, `last.rs`, `search.rs`, `stdin.rs`).
 `tests/*.rs` files that construct fixture journal files write the on-disk
-`[YYYY-MM-DD.HH:MM:SS]` format directly rather than going through the CLI, so
+`[YYYY-MM-DD HH:MM:SS]` format directly rather than going through the CLI, so
 each test controls exact entry content/order independent of the append path.

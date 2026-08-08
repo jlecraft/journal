@@ -9,10 +9,10 @@ Entries are stored in a flat, human-readable format, so the underlying file
 stays inspectable and editable by hand -- no database, no lock-in.
 
 ```
-[2026-07-28.14:03:00]
+[2026-07-28 14:03:00]
 124/80/55 @bp @health
 
-[2026-07-28.20:41:55]
+[2026-07-28 20:41:55]
 slept 7 hours
 @sleep
 ```
@@ -175,11 +175,13 @@ combined with entry text, `-t/--tags`, or `-s/--search`.
 
 ### Timestamp display
 
-By default, every header shows the timestamp exactly as it's stored on
-disk, with no age annotation:
+By default, every header shows the entry's fully resolved timestamp, with
+no age annotation. For a header written in full already, that's an
+unmodified echo of what's on disk; a hand-typed shorthand header (see
+below) is always shown expanded, even without `-h`:
 
 ```
-### 2026-07-28.14:03:00
+### 2026-07-28 14:03:00
 124/80/55 @bp @health
 ```
 
@@ -227,6 +229,19 @@ More examples (elapsed time -> `long` -> `short`):
 
 See `journal-cli-spec.md` §4 for the full rationale (why exact-by-default,
 why `diff` is a preset rather than a template).
+
+Pass `--no-headers` to drop the header line entirely and print just the
+body -- useful when you only want the text, e.g. piping into another tool.
+It also drops the blank line that normally separates entries, so with
+multiple entries printed at once, bodies run directly into each other:
+
+```sh
+journal -3 --no-headers
+journal -s "@bp" -L --no-headers
+```
+
+This only affects what's printed; it has no effect on what's stored on
+disk.
 
 ### Diagnostics
 
@@ -333,7 +348,7 @@ instead -- so check your editor's documentation for its equivalent flag.
 ## Entry format
 
 ```
-[YYYY-MM-DD.HH:MM:SS]
+[YYYY-MM-DD HH:MM:SS]
 Entry body, line 1
 Entry body, line 2 (optional)
 @tag1 @tag2 (optional, only present if -t/--tags was used)
@@ -346,6 +361,27 @@ were typed. Every entry ends with exactly one blank line, which the tool
 maintains automatically regardless of what you type. See
 [`journal-cli-spec.md`](journal-cli-spec.md) for the full design spec and
 the rationale behind each behavior.
+
+A header you hand-type or hand-edit doesn't need full precision -- a date
+part (`YYYY`, `MM-DD`, or `YYYY-MM-DD`) and a time part (`HH:MM` or
+`HH:MM:SS`) can each be given or left out independently. `[1972]` displays
+as `1972-01-01 00:00:00` (missing month/day default to `01-01`), and
+`[1972 08:30]` as `1972-01-01 08:30:00` (missing seconds default to `00`).
+A header with a date part but no year -- `[08-07]` (month-day only) --
+displays with the *current year* filled in instead, e.g.
+`2026-08-07 00:00:00`. A header with **no date part at all** -- just a
+time, like `[08:30]` -- displays with **today's actual date** filled in,
+e.g. `2026-08-07 08:30:00`, not just the current year. Since that's always
+a real, concrete point in time, `-h/--human` computes an elapsed-time
+annotation for it same as any other entry, even though the date behind it
+wasn't actually given.
+
+This expansion only ever affects what's printed, never what's stored --
+`journal` doesn't rewrite a header just because it read the file. `[1972]`
+and `[08:30]` stay exactly that on disk forever, even after an editor
+session that touches the entry they belong to; only a brand-new entry
+(`journal "..."`, stdin, or an editor timestamp you left untouched) is
+ever written in full. See §2.2 of the spec for the full grammar.
 
 ## Development
 

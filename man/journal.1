@@ -4,7 +4,7 @@
 .SH NAME
 journal \- A command\-line utility for appending timestamped, taggable entries to a plain\-text journal file, and searching that file by tag or keyword.
 .SH SYNOPSIS
-\fBjournal\fR [\fB\-t\fR|\fB\-\-tags\fR] [\fB\-f\fR|\fB\-\-file\fR] [\fB\-s\fR|\fB\-\-search\fR] [\fB\-a\fR|\fB\-\-all\fR] [\fB\-\-limit\fR] [\fB\-L\fR|\fB\-\-lines\-only\fR] [\fB\-v\fR|\fB\-\-verbose\fR] [\fB\-h\fR|\fB\-\-human\fR] [\fB\-\-color\fR] [\fB\-\-no\-color\fR] [\fB\-\-help\fR] [\fB\-V\fR|\fB\-\-version\fR] [\fITEXT\fR] 
+\fBjournal\fR [\fB\-t\fR|\fB\-\-tags\fR] [\fB\-f\fR|\fB\-\-file\fR] [\fB\-s\fR|\fB\-\-search\fR] [\fB\-a\fR|\fB\-\-all\fR] [\fB\-\-limit\fR] [\fB\-L\fR|\fB\-\-lines\-only\fR] [\fB\-v\fR|\fB\-\-verbose\fR] [\fB\-h\fR|\fB\-\-human\fR] [\fB\-\-color\fR] [\fB\-\-no\-color\fR] [\fB\-\-no\-headers\fR] [\fB\-\-help\fR] [\fB\-V\fR|\fB\-\-version\fR] [\fITEXT\fR] 
 .SH DESCRIPTION
 A command\-line utility for appending timestamped, taggable entries to a plain\-text journal file, and searching that file by tag or keyword.
 .SH OPTIONS
@@ -38,6 +38,9 @@ Highlight matched search terms in ANSI color, even when stdout isn\*(Aqt a termi
 .TP
 \fB\-\-no\-color\fR
 Never highlight matched search terms, overriding [color].enabled
+.TP
+\fB\-\-no\-headers\fR
+Suppress the timestamp header shown above each entry (or, with \-L/\-\-lines\-only, above each matched\-line block), along with the blank line normally used to separate entries \-\- printed entries run directly into each other, body to body. Has no effect on what\*(Aqs stored on disk \-\- display only
 .TP
 \fB\-\-help\fR
 Print help

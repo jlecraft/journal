@@ -18,11 +18,11 @@ fn fixture() -> (TempDir, std::path::PathBuf) {
     let path = dir.path().join("journal.txt");
     fs::write(
         &path,
-        "[2026-07-01.08:00:00]\nfirst\n\n\
-         [2026-07-02.09:00:00]\nsecond\n\n\
-         [2026-07-03.10:00:00]\nthird\n\n\
-         [2026-07-04.11:00:00]\nfourth\n\n\
-         [2026-07-05.12:00:00]\nfifth\n\n",
+        "[2026-07-01 08:00:00]\nfirst\n\n\
+         [2026-07-02 09:00:00]\nsecond\n\n\
+         [2026-07-03 10:00:00]\nthird\n\n\
+         [2026-07-04 11:00:00]\nfourth\n\n\
+         [2026-07-05 12:00:00]\nfifth\n\n",
     )
     .unwrap();
     (dir, path)
