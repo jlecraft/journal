@@ -102,11 +102,11 @@ human actually wrote down.
 
 **This flexibility is a display-time affordance only — what's on disk is
 never rewritten because of it.** The tool itself always writes the full
-`YYYY-MM-DD HH:MM:SS` form (§2) for a genuinely new entry (`journal "..."`,
-stdin, or a freshly-seeded, untouched editor timestamp), but a header that
-already exists on disk in a shorter hand-typed form — including one a human
-just edited the seeded timestamp down to before saving via editor mode
-(§3.2) — keeps that exact text forever, byte-for-byte. `journal` only ever
+`YYYY-MM-DD HH:MM:SS` form (§2) for a genuinely new entry appended via
+`journal "..."` or stdin, but a header that already exists on disk in a
+shorter hand-typed form — including one a human types directly into the
+journal file via editor mode (§3.2), since nothing is pre-seeded there —
+keeps that exact text forever, byte-for-byte. `journal` only ever
 *expands* a header for the reader (§4); it doesn't "fix" what was
 intentionally written by hand.
 
@@ -129,10 +129,16 @@ level (exit code 2 if combined).
 
 ### 3.2 Compose via `$EDITOR` (no arguments)
 
-Running `journal` with no positional text opens the resolved journal file in
-`$EDITOR` (falling back to `vi`) via a temporary buffer — see §6 for the full
-mechanics. `-t/--tags` works here too, pre-seeding a tags line into the
-buffer.
+Running `journal` with no positional text opens the resolved journal file
+directly in `$EDITOR` (falling back to `vi`) — see §6 for the full
+mechanics. Nothing is pre-inserted: no timestamp, no blank line, no tags
+line. The user types a new header and body themselves (per §2's on-disk
+format) to compose a new entry, or edits anything else already in the file
+— there's no distinction between "compose" and "edit an existing entry"
+modes, since both are just editing the same file directly. `-t/--tags` has
+nothing to attach a tags line to here, so combining it with the
+no-argument form is a usage error (exit code 2) rather than being silently
+ignored.
 
 ### 3.3 Show the last N entries (`-N`)
 
@@ -389,56 +395,27 @@ Resolved in this precedence order:
 back to `vi`. `$EDITOR`'s value is shell-word split (so quoted paths with
 spaces work), giving a program name and its own leading arguments.
 
-The timestamp for the new entry (and any pre-seeded `-t/--tags` line) is
-inserted only into a temporary buffer, seeded with the journal's existing
-contents plus the new header line and a blank line positioned right after it
-for the cursor — never written ahead of time to the real journal file. The
-editor is launched against that temp file. Whether the user actually saved
-is detected by comparing the temp file's modification time before and after
-the editor process exits:
+`$EDITOR` is launched directly on the real journal file — no temporary
+buffer, no seeded content, no diffing, no atomic replace. The file is
+created empty first (§5) if it doesn't already exist, so the editor always
+has something to open. Whatever the editor writes to the file by the time
+it exits is exactly what ends up on disk; quitting without saving simply
+means the file was never written, so it's unchanged as a natural
+consequence of editing in place, not anything `journal` detects or
+special-cases.
 
-- **No change in mtime** (e.g. `:q` or `:q!` in vim with nothing written):
-  the real journal file is left completely untouched, and nothing is
-  persisted.
-- **mtime changed:** the edited buffer is read back, and the newly-composed
-  entry (found by locating the last header line — everything before it is
-  left byte-for-byte as the user last had it) has its trailing blank lines
-  normalized the same way the non-editor append path does. The header line
-  itself is not part of that normalization — whatever timestamp text is
-  there, canonical or hand-typed shorthand (§2.2), is kept exactly as
-  written. The result atomically replaces the real journal file (temp file
-  persisted over the original path).
-
-A non-zero editor exit status is treated as a failure (nothing is persisted,
-the process exits with an error).
-
-**Interruption** (`Ctrl-C`/`SIGINT`, or `SIGTERM`) during this flow is
-handled explicitly. The temp buffer would otherwise leak: its normal cleanup
-relies on being dropped when it goes out of scope, but Rust's default signal
-disposition terminates the process immediately without running destructors.
-A signal handler, registered right after the temp file is created, removes
-it and exits with status `130` (128 + `SIGINT`, the standard convention).
-This is safe even if the signal arrives just after a successful save — by
-then the temp path has already been renamed away to become the real journal
-file, so it no longer names anything on disk and the removal is a harmless
-no-op. No other mode creates a temporary file, so no other code path
-installs a handler.
-
-**Cursor positioning** is opt-in via the config file (§7), since no single
-command-line flag positions an editor's cursor across every editor
-(vi/vim/nano use `+N`; GUI editors vary). With no config, no extra arguments
-are passed and the cursor lands wherever the editor defaults to.
+A non-zero editor exit status is reported as an error (exit code 1). Since
+there's no temp file or atomic replace involved, this says nothing about
+whether the file was modified before the editor exited — whatever the
+editor had already written to disk stays written.
 
 ## 7. Config File
 
 An optional TOML file at `$XDG_CONFIG_HOME/journal/config.toml` (falling
 back to `~/.config/journal/config.toml`, same resolution as §5) configures
-editor cursor positioning, default highlighting, and `-h/--human` display:
+default highlighting and `-h/--human` display:
 
 ```toml
-[editor]
-args = "+{line}"
-
 [color]
 enabled = false
 
@@ -446,13 +423,6 @@ enabled = false
 format = "%Y-%m-%d %H:%M"
 diff = "short"
 ```
-
-`[editor].args` is shell-word split (same quoting rules as `$EDITOR`
-itself) and `{line}` is replaced with the 1-indexed line number of the
-seeded blank line. The resulting arguments are inserted immediately before
-the file path argument — ahead of any of `$EDITOR`'s own arguments, so
-cursor positioning takes effect before anything else `$EDITOR` might do
-(e.g. its own `-c` commands).
 
 `[color].enabled` sets the default for search-term highlighting (§3.4.4)
 when neither `--color` nor `--no-color` is passed. Default `false`: color
@@ -489,22 +459,23 @@ documented default, table by table and key by key.
 |---|---|
 | 0 | Success — entry appended/saved, `-N` printed (or the journal was empty), or a search found at least one match |
 | 1 | Runtime error (I/O failure, editor exited non-zero, etc.), or a search found no matches |
-| 2 | Usage error — an invalid flag combination, caught either by `clap` itself (e.g. `-s` combined with `-t`) or by explicit validation (e.g. `-a` without `-s`, `-N` combined with `-s`) |
-| 130 | The no-argument editor flow was interrupted (`SIGINT`/`SIGTERM`) while composing an entry; the temporary edit buffer is removed before exiting (§6) |
+| 2 | Usage error — an invalid flag combination, caught either by `clap` itself (e.g. `-s` combined with `-t`) or by explicit validation (e.g. `-a` without `-s`, `-N` combined with `-s`, `-t/--tags` without entry text) |
 
 ## 10. Concurrency / Write Safety
 
 Since the journal file may be touched by multiple invocations concurrently
 (e.g. a cron job and an interactive session), writes are serialized with an
 exclusive lock (`flock`) taken on a stable sidecar file, `<path>.lock` —
-*not* on the journal file itself. This matters because editor-mode saves
-(§6) replace the journal file via an atomic rename: a lock held on the file
-being renamed away is tied to the old inode and stops protecting anything
-once the rename happens, silently reopening a lost-update race. Locking a
-sidecar path that's never renamed avoids that hazard. Both the non-editor
-append path and the editor save path take this same lock, so they serialize
-against each other correctly. The write itself is also opened in append
-(`O_APPEND`) mode as defense in depth.
+not the journal file itself. Both the non-editor append path and the
+editor-mode session (§6) take this same lock; the editor holds it for the
+entire session, so a concurrent `journal` append blocks until the editor
+exits rather than racing it, and the two can't corrupt each other's
+writes. This protection only covers `journal` invocations themselves — if
+something else (a different program, or the same journal file opened
+directly in an editor outside of `journal`) writes to the file without
+going through this lock, that write isn't serialized against it. The
+write itself is also opened in append (`O_APPEND`) mode as defense in
+depth.
 
 ## 11. Output Stream Discipline
 
@@ -525,9 +496,8 @@ currently emitted:
 | After resolving the journal file (§5) | `using journal file <path>` |
 | Around the sidecar lock (§10) | `acquiring lock at <path>.lock`, then `lock released` |
 | After appending an entry | `appended entry at <timestamp>` |
-| Editor mode: temp buffer created | `editing via temp file <path>` |
 | Editor mode: launching `$EDITOR` | `launching editor: <program> <args>` |
-| Editor mode: outcome | `editor exited without saving changes`, or `entry saved` |
+| Editor mode: outcome | `editor exited` |
 | `-N` | `<total> entries in journal, printing last <n>` |
 | `-s/--search` (either mode) | `<n> entries matched` |
 
@@ -546,10 +516,8 @@ workflow).
 Not currently implemented; listed here as known gaps rather than mixed into
 the normative sections above:
 
-1. An editor mode targeted at an existing entry, for corrections — currently
-   the no-argument editor flow only ever appends a new entry.
-2. A way to list all tags in use, or list/filter entries by date range.
-3. Config-driven defaults for more flags, generalizing the precedent
+1. A way to list/filter entries by date range.
+2. Config-driven defaults for more flags, generalizing the precedent
    `[color].enabled` (§7) already sets. Of the three standard Unix ways to
    make a command always run with certain flags — a shell alias, a
    program-parsed environment variable (e.g. `less`'s `LESS`, POSIX

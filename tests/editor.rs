@@ -23,88 +23,7 @@ fn fake_editor(dir: &std::path::Path, name: &str, body: &str) -> PathBuf {
 }
 
 #[test]
-fn commits_new_entry_when_editor_saves_changes() {
-    let dir = tempfile::tempdir().unwrap();
-    let journal_path = dir.path().join("journal.txt");
-    let editor = fake_editor(
-        dir.path(),
-        "append-editor.sh",
-        r#"printf '\nentry body from editor @demo\n' >> "$1""#,
-    );
-
-    cmd()
-        .env("EDITOR", &editor)
-        .arg("-f")
-        .arg(&journal_path)
-        .assert()
-        .success();
-
-    let contents = fs::read_to_string(&journal_path).unwrap();
-    assert!(
-        predicate::str::is_match(r"^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\]\n")
-            .unwrap()
-            .eval(&contents)
-    );
-    assert!(contents.contains("entry body from editor @demo"));
-    assert!(contents.ends_with("entry body from editor @demo\n\n"));
-}
-
-#[test]
-fn dash_t_flag_seeds_a_tags_line_into_the_editor_buffer() {
-    let dir = tempfile::tempdir().unwrap();
-    let journal_path = dir.path().join("journal.txt");
-    let marker = dir.path().join("seeded.txt");
-    // This editor never touches "$1" -- it just captures what journal
-    // seeded the buffer with, so the mtime check treats the session as
-    // "no changes" and nothing is persisted to the real journal file.
-    let editor = fake_editor(
-        dir.path(),
-        "capture-editor.sh",
-        &format!(r#"cp "$1" "{}""#, marker.display()),
-    );
-
-    cmd()
-        .env("EDITOR", &editor)
-        .arg("-f")
-        .arg(&journal_path)
-        .args(["-t", "beer @store"])
-        .assert()
-        .success();
-
-    let seeded = fs::read_to_string(&marker).unwrap();
-    // Timestamp alone on line 1, a blank line for the body, then the
-    // -t tags line -- bare "beer" auto-prefixed with @.
-    assert!(
-        predicate::str::is_match(r"^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\]\n\n@beer @store$")
-            .unwrap()
-            .eval(&seeded)
-    );
-}
-
-#[test]
-fn dash_t_tags_seeded_into_the_editor_are_persisted_on_save() {
-    let dir = tempfile::tempdir().unwrap();
-    let journal_path = dir.path().join("journal.txt");
-    let editor = fake_editor(
-        dir.path(),
-        "append-editor.sh",
-        r#"sed -i '2s/^$/entry body from editor/' "$1""#,
-    );
-
-    cmd()
-        .env("EDITOR", &editor)
-        .arg("-f")
-        .arg(&journal_path)
-        .args(["-t", "beer @store"])
-        .assert()
-        .success();
-
-    let contents = fs::read_to_string(&journal_path).unwrap();
-    assert!(contents.ends_with("entry body from editor\n@beer @store\n\n"));
-}
-
-#[test]
-fn basic_entry_seeds_a_blank_line_after_the_timestamp_for_the_cursor() {
+fn opens_the_real_journal_file_directly_with_no_seeded_content() {
     let dir = tempfile::tempdir().unwrap();
     let journal_path = dir.path().join("journal.txt");
     let marker = dir.path().join("seeded.txt");
@@ -121,103 +40,19 @@ fn basic_entry_seeds_a_blank_line_after_the_timestamp_for_the_cursor() {
         .assert()
         .success();
 
-    let seeded = fs::read_to_string(&marker).unwrap();
-    assert!(
-        predicate::str::is_match(r"^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\]\n\n$")
-            .unwrap()
-            .eval(&seeded)
-    );
+    // Nothing is seeded into the buffer -- a brand new journal is opened
+    // completely empty, no timestamp, no blank cursor line, no tags.
+    assert_eq!(fs::read_to_string(&marker).unwrap(), "");
 }
 
 #[test]
-fn editor_args_from_config_position_the_cursor_via_the_line_placeholder() {
+fn changes_saved_by_the_editor_land_directly_in_the_journal_file() {
     let dir = tempfile::tempdir().unwrap();
     let journal_path = dir.path().join("journal.txt");
-    // A new (empty) journal: line 1 is the seeded timestamp, so the
-    // blank cursor line -- where {line} should resolve to -- is line 2.
-    let config_home = dir.path().join("config-home");
-    fs::create_dir_all(config_home.join("journal")).unwrap();
-    fs::write(
-        config_home.join("journal").join("config.toml"),
-        "[editor]\nargs = \"+{line}\"\n",
-    )
-    .unwrap();
-
-    let marker = dir.path().join("argv.txt");
-    let editor = fake_editor(
-        dir.path(),
-        "capture-args-editor.sh",
-        &format!(r#"printf '%s\n' "$@" > "{}""#, marker.display()),
-    );
-
-    cmd()
-        .env("EDITOR", &editor)
-        .env("XDG_CONFIG_HOME", &config_home)
-        .arg("-f")
-        .arg(&journal_path)
-        .assert()
-        .success();
-
-    let argv: Vec<String> = fs::read_to_string(&marker)
-        .unwrap()
-        .lines()
-        .map(str::to_string)
-        .collect();
-    assert!(argv.contains(&"+2".to_string()));
-}
-
-#[test]
-fn cursor_positioning_args_precede_editors_own_args() {
-    // Regression guard: vim-likes run `+cmd`/`-c cmd` arguments in the
-    // order given on the command line. If journal's own cursor-position
-    // arg landed *after* extra commands baked into $EDITOR itself, those
-    // commands would run before the cursor is repositioned and act on
-    // the wrong line. Caught manually with a real vim invocation whose
-    // $EDITOR also carried its own `-c` flags; this pins the fix.
-    let dir = tempfile::tempdir().unwrap();
-    let journal_path = dir.path().join("journal.txt");
-    let config_home = dir.path().join("config-home");
-    fs::create_dir_all(config_home.join("journal")).unwrap();
-    fs::write(
-        config_home.join("journal").join("config.toml"),
-        "[editor]\nargs = \"+{line}\"\n",
-    )
-    .unwrap();
-
-    let marker = dir.path().join("argv.txt");
-    let editor = fake_editor(
-        dir.path(),
-        "capture-args-editor.sh",
-        &format!(r#"printf '%s\n' "$@" > "{}""#, marker.display()),
-    );
-
-    cmd()
-        .env("EDITOR", format!("{} --an-editor-flag", editor.display()))
-        .env("XDG_CONFIG_HOME", &config_home)
-        .arg("-f")
-        .arg(&journal_path)
-        .assert()
-        .success();
-
-    let argv: Vec<String> = fs::read_to_string(&marker)
-        .unwrap()
-        .lines()
-        .map(str::to_string)
-        .collect();
-    let cursor_pos = argv.iter().position(|a| a == "+2").unwrap();
-    let flag_pos = argv.iter().position(|a| a == "--an-editor-flag").unwrap();
-    assert!(cursor_pos < flag_pos);
-}
-
-#[test]
-fn preserves_existing_entries_above_the_new_one() {
-    let dir = tempfile::tempdir().unwrap();
-    let journal_path = dir.path().join("journal.txt");
-    fs::write(&journal_path, "[2026-01-01 00:00:00] @old\nold entry\n\n").unwrap();
     let editor = fake_editor(
         dir.path(),
         "append-editor.sh",
-        r#"printf ' new entry text\n' >> "$1""#,
+        r#"printf '[2026-07-28 14:03:00]\nentry body from editor @demo\n\n' >> "$1""#,
     );
 
     cmd()
@@ -228,8 +63,35 @@ fn preserves_existing_entries_above_the_new_one() {
         .success();
 
     let contents = fs::read_to_string(&journal_path).unwrap();
-    assert!(contents.starts_with("[2026-01-01 00:00:00] @old\nold entry\n\n"));
-    assert!(contents.contains("new entry text"));
+    assert_eq!(
+        contents,
+        "[2026-07-28 14:03:00]\nentry body from editor @demo\n\n"
+    );
+}
+
+#[test]
+fn existing_journal_content_is_visible_to_the_editor_and_preserved() {
+    let dir = tempfile::tempdir().unwrap();
+    let journal_path = dir.path().join("journal.txt");
+    fs::write(&journal_path, "[2026-01-01 00:00:00]\nold entry\n\n").unwrap();
+    let editor = fake_editor(
+        dir.path(),
+        "append-editor.sh",
+        r#"printf '[2026-07-28 14:03:00]\nnew entry\n\n' >> "$1""#,
+    );
+
+    cmd()
+        .env("EDITOR", &editor)
+        .arg("-f")
+        .arg(&journal_path)
+        .assert()
+        .success();
+
+    let contents = fs::read_to_string(&journal_path).unwrap();
+    assert_eq!(
+        contents,
+        "[2026-01-01 00:00:00]\nold entry\n\n[2026-07-28 14:03:00]\nnew entry\n\n"
+    );
 }
 
 #[test]
@@ -253,7 +115,7 @@ fn editor_quitting_without_saving_leaves_journal_untouched() {
 }
 
 #[test]
-fn editor_failure_leaves_journal_untouched_and_reports_error() {
+fn editor_failure_reports_an_error() {
     let dir = tempfile::tempdir().unwrap();
     let journal_path = dir.path().join("journal.txt");
     fs::write(&journal_path, "[2026-01-01 00:00:00]\nunchanged\n\n").unwrap();
@@ -275,44 +137,34 @@ fn editor_failure_leaves_journal_untouched_and_reports_error() {
 }
 
 #[test]
-fn sigint_during_editor_removes_the_temp_edit_buffer() {
+fn opening_the_editor_on_a_missing_file_creates_it_first() {
     let dir = tempfile::tempdir().unwrap();
     let journal_path = dir.path().join("journal.txt");
-    // Never touches "$1" -- just gives us a window to send SIGINT before
-    // the (fake) editor would otherwise exit on its own.
-    let editor = fake_editor(dir.path(), "slow-editor.sh", "sleep 5");
+    assert!(!journal_path.exists());
+    let editor = fake_editor(dir.path(), "noop-editor.sh", "exit 0");
 
-    // assert_cmd::Command has no public `spawn` (it wants `.assert()`
-    // instead), so this test needs a real std::process::Child to signal
-    // mid-run -- build one directly against the built binary's path.
-    let mut child = std::process::Command::new(assert_cmd::cargo::cargo_bin("journal"))
-        .env_remove("JOURNAL_FILE")
-        .env_remove("XDG_DATA_HOME")
-        .env_remove("XDG_CONFIG_HOME")
+    cmd()
         .env("EDITOR", &editor)
         .arg("-f")
         .arg(&journal_path)
-        .spawn()
-        .unwrap();
+        .assert()
+        .success();
 
-    // Give journal time to seed the temp file and launch the editor.
-    std::thread::sleep(std::time::Duration::from_millis(300));
+    assert!(journal_path.exists());
+    assert_eq!(fs::read_to_string(&journal_path).unwrap(), "");
+}
 
-    std::process::Command::new("kill")
-        .args(["-INT", &child.id().to_string()])
-        .status()
-        .unwrap();
-
-    let status = child.wait().unwrap();
-    assert_eq!(status.code(), Some(130));
-
-    let leaked: Vec<_> = fs::read_dir(dir.path())
-        .unwrap()
-        .filter_map(|e| e.ok())
-        .filter(|e| e.file_name().to_string_lossy().starts_with(".journal-edit-"))
-        .collect();
-    assert!(leaked.is_empty(), "leaked temp file(s): {leaked:?}");
-    assert!(!journal_path.exists());
+#[test]
+fn dash_t_flag_without_entry_text_is_a_usage_error() {
+    let dir = tempfile::tempdir().unwrap();
+    let journal_path = dir.path().join("journal.txt");
+    cmd()
+        .arg("-f")
+        .arg(&journal_path)
+        .args(["-t", "bp"])
+        .assert()
+        .failure()
+        .code(2);
 }
 
 #[test]
@@ -322,7 +174,7 @@ fn editor_session_does_not_leave_the_lock_held() {
     let editor = fake_editor(
         dir.path(),
         "append-editor.sh",
-        r#"printf ' entry one\n' >> "$1""#,
+        r#"printf '[2026-07-28 14:03:00]\nentry one\n\n' >> "$1""#,
     );
 
     cmd()

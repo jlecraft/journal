@@ -83,34 +83,27 @@ this pre-parse step or with each other (e.g. `-a`/`--limit`/`-L` all require
 - `storage.rs` — journal file path resolution (`-f` > `$JOURNAL_FILE` > XDG
   data dir) and all file I/O. Writes go through `with_exclusive_lock`, which
   locks a stable `<path>.lock` sidecar file rather than the journal file
-  itself — deliberate, because editor mode replaces the journal file via
-  `rename`, and a lock held on a file being renamed away is tied to the old
-  inode and stops protecting anything. `append_entry` and editor mode's save
-  both go through this same lock so they serialize against each other.
+  itself. `append_entry` and editor mode (`editor::open_in_editor`, held for
+  the whole editing session) both go through this same lock so they
+  serialize against each other — a concurrent append can't land while an
+  interactive editing session has the file open.
   `with_exclusive_lock`/`append_entry` both take a `verbose: bool` for
   `-v/--verbose`'s lock-acquire/release diagnostics.
-- `editor.rs` — the no-argument "open `$EDITOR`" flow. Seeds a temp file
-  (existing content + a fresh timestamp header + a blank line for the
-  cursor, optionally a pre-seeded tags line), diffs mtime before/after the
-  editor exits to detect "quit without saving" vs. a real save, then
-  atomically replaces the journal file with `tempfile::persist`. Only the
-  newly-composed entry (found via `Entry::last_entry_start`) gets its
-  trailing blank lines re-normalized on save — everything before it is
-  left byte-for-byte as the user last had it, and so is that entry's own
-  header line: `Entry::render` writes back whatever timestamp text it was
-  parsed from verbatim (`raw_header`), so a header a human edited down to
-  shorthand (§2.2) is never "fixed" back to full precision just because it
-  passed through save. Right after the temp file is created, registers a
-  `ctrlc` handler (the one dependency in this codebase pulled in for
-  something that genuinely can't be hand-rolled in stable Rust) that
-  removes it and exits `130` on `SIGINT`/`SIGTERM` — otherwise the file
-  would leak, since Rust's default signal disposition terminates the
-  process without running the `tempfile::NamedTempFile` `Drop` that
-  normally cleans it up.
+- `editor.rs` — the no-argument "open `$EDITOR`" flow. Deliberately thin:
+  launches `$EDITOR` directly on the real journal file (creating it empty
+  first via `storage::ensure_exists` if needed) under the same
+  `storage::with_exclusive_lock` `append_entry` uses, held for the whole
+  editing session so a concurrent append can't interleave with it. No
+  seeding, no temp file, no mtime diffing, no atomic replace — whatever the
+  editor writes (or doesn't) by the time it exits is exactly what's on
+  disk, so "quit without saving" is just the file being untouched rather
+  than something `journal` detects. A non-zero editor exit status is
+  reported as an error, but says nothing about whether the file was
+  already modified before that happened.
 - `config.rs` — optional TOML config at `$XDG_CONFIG_HOME/journal/config.toml`.
-  Currently one setting, `editor.args`, a shell-word-split template with a
-  `{line}` placeholder for cursor positioning (editors vary — vi/vim/nano use
-  `+N`, GUI editors don't — so this is opt-in, not auto-detected).
+  `[color].enabled` and `[timestamp].format`/`[timestamp].diff` (§4/§7 of
+  the spec); a missing file or missing keys fall back to documented
+  defaults table by table, key by key.
 - `main.rs` — argv → `Cli` → `run()` dispatch, plus the two output-producing
   paths (`run_last`, `run_search`) that turn `Entry`s into printed text.
 

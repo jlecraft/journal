@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::io::Read;
 use std::path::Path;
 
@@ -51,6 +52,10 @@ fn run(cli: Cli) -> Result<i32> {
         return run_last(&path, n, cli.verbose, &display_opts);
     }
 
+    if cli.all_tags {
+        return run_all_tags(&path, cli.verbose);
+    }
+
     match cli.text {
         Some(text) => {
             // `-` means "read entry text from stdin" (§6.5), the standard
@@ -60,7 +65,7 @@ fn run(cli: Cli) -> Result<i32> {
             Ok(0)
         }
         None => {
-            editor::compose_new_entry(&path, cli.tags.as_deref(), cli.verbose)?;
+            editor::open_in_editor(&path, cli.verbose)?;
             Ok(0)
         }
     }
@@ -111,6 +116,36 @@ fn run_last(path: &Path, n: usize, verbose: bool, display_opts: &DisplayOpts) ->
     let mut out = String::new();
     for e in &entries[start..] {
         out.push_str(&e.display(display_opts));
+    }
+    print!("{out}");
+    Ok(0)
+}
+
+/// Prints every unique tag found anywhere in the journal, one per line,
+/// sorted alphabetically and stripped of their leading `@` (§2.1 -- tags
+/// aren't a structured field, so this just recovers `@word` tokens from
+/// every entry's body the same way `Entry::tags` does elsewhere), each
+/// preceded by its usage count, right-justified to the widest count so the
+/// tag names line up in a column.
+fn run_all_tags(path: &Path, verbose: bool) -> Result<i32> {
+    let contents = storage::read_contents(path)?;
+    let entries = Entry::parse_all(&contents);
+
+    let mut counts: BTreeMap<String, usize> = BTreeMap::new();
+    for tag in entries.iter().flat_map(|e| e.tags()) {
+        *counts.entry(tag.trim_start_matches('@').to_string()).or_insert(0) += 1;
+    }
+    vlog(verbose, format!("{} unique tags", counts.len()));
+
+    let width = counts
+        .values()
+        .map(|n| n.to_string().len())
+        .max()
+        .unwrap_or(0);
+
+    let mut out = String::new();
+    for (tag, count) in &counts {
+        out.push_str(&format!("{count:width$} {tag}\n"));
     }
     print!("{out}");
     Ok(0)

@@ -11,28 +11,9 @@ use serde::Deserialize;
 #[derive(Debug, Default, Deserialize, PartialEq, Eq)]
 pub struct Config {
     #[serde(default)]
-    pub editor: EditorConfig,
-    #[serde(default)]
     pub color: ColorConfig,
     #[serde(default)]
     pub timestamp: TimestampConfig,
-}
-
-/// Editor invocation overrides for the no-argument compose flow (§5.1).
-/// Needed because positioning the cursor after opening a fresh entry
-/// requires an editor-specific command-line argument (e.g. `+N` for
-/// vi/vim/nano, `+N` for emacs too, but GUI editors vary) -- there's no
-/// single flag that works everywhere, so it's left to the user to
-/// configure for their own `$EDITOR`.
-#[derive(Debug, Default, Deserialize, PartialEq, Eq)]
-pub struct EditorConfig {
-    /// Extra arguments passed to $EDITOR, inserted just before the file
-    /// path, with `{line}` replaced by the 1-indexed line number of the
-    /// blank line where the user should start typing (right after the
-    /// newly-seeded timestamp, or between it and any `-t/--tags` line).
-    /// Parsed with the same shell-word splitting as $EDITOR itself, so
-    /// quoting works the same way, e.g. `+{line} -c "startinsert"`.
-    pub args: Option<String>,
 }
 
 /// Whether search-term highlighting (§3.4.4) is on by default when neither
@@ -125,15 +106,6 @@ mod tests {
     fn no_config_path_yields_defaults() {
         let config = load_from(None).unwrap();
         assert_eq!(config, Config::default());
-    }
-
-    #[test]
-    fn parses_editor_args_from_toml() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("config.toml");
-        std::fs::write(&path, "[editor]\nargs = \"+{line}\"\n").unwrap();
-        let config = load_from(Some(path)).unwrap();
-        assert_eq!(config.editor.args, Some("+{line}".to_string()));
     }
 
     #[test]

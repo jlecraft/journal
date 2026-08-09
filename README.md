@@ -19,12 +19,14 @@ slept 7 hours
 
 ## Features
 
-- Append timestamped entries from the command line, `$EDITOR`, or stdin
+- Append timestamped entries from the command line or stdin, or open the
+  journal file directly in `$EDITOR` with no arguments
 - Tag entries by typing `@tag` anywhere in the text, or via `-t/--tags`
   (bare words are auto-prefixed with `@` and appended as their own line)
 - Search by tag (exact match) or keyword (case-insensitive substring), with
   AND/OR term combining, a result limit, and an optional lines-only view
   (`-L`) that prints just the matching lines under each entry's header
+- List every unique tag in the journal with `--all-tags`
 - Show the last N entries with `-N` (e.g. `journal -3`)
 - Plain, exact timestamps by default; `-h/--human` switches to a
   configurable formatted date with an optional elapsed-time annotation
@@ -36,8 +38,6 @@ slept 7 hours
   can't corrupt each other's entries
 - `-v/--verbose` prints diagnostics (resolved file, lock status, editor
   invocation) to stderr only, without touching stdout output you might pipe
-- Interrupting the editor flow (`Ctrl-C`) cleans up its temporary edit
-  buffer instead of leaking it
 - Standard Unix CLI conventions: proper exit codes, stdin support (`-`),
   stdout/stderr discipline, `-h/--help`, `-V/--version`, a man page
 
@@ -99,25 +99,17 @@ Pipe entry text in instead of passing it as an argument:
 echo "back from a walk @exercise" | journal -
 ```
 
-Run `journal` with no arguments to open the entry in `$EDITOR` (falling back
-to `vi`), with a new timestamp line pre-inserted and the cursor left on the
-blank line right after it, ready to type the body. `-t/--tags` works here
-too -- its tags line is pre-seeded at the end of the entry, after the blank
-line the cursor starts on:
+Run `journal` with no arguments to open the journal file itself directly in
+`$EDITOR` (falling back to `vi`) -- nothing is pre-inserted, no timestamp,
+no blank line, no tags; type a new entry (or edit anything else in the
+file) and save however your editor normally saves. `-t/--tags` requires
+entry text to attach the tags line to, so using it without any is a usage
+error here -- there's no buffer to pre-seed a tags line into.
 
-```sh
-journal -t "sleep"
-```
-
-The real journal file is only touched if you actually save -- aborting the
-editor (`:q!`, or exiting without writing) leaves it untouched. Interrupting
-the editor itself (`Ctrl-C`) is handled the same way: the temporary edit
-buffer is removed and the real journal file is left untouched.
-
-Positioning the cursor requires an editor-specific command-line flag (vi/vim
-and friends use `+N`; GUI editors vary), so there's no single default that
-works everywhere. See [Editor cursor positioning](#editor-cursor-positioning)
-below to set it up for your `$EDITOR`.
+Whatever the editor writes to the file when it exits is exactly what ends
+up on disk -- there's no temp file, no diffing, no atomic replace. Quitting
+without saving (`:q`, `:q!`) simply never touches the file, so the journal
+is left as it was.
 
 ### Search
 
@@ -163,6 +155,24 @@ default comes from `[color].enabled` in config.toml (see Configuration
 below), itself defaulting to off. `NO_COLOR`, if set, always wins over
 both. Unlike some tools, `--color` colors piped output too -- it's an
 explicit request, not an auto-detected terminal capability.
+
+### List all tags
+
+```sh
+journal --all-tags
+```
+
+Prints every unique `@tag` found anywhere in the journal, one per line,
+sorted alphabetically and shown as bare words (`health`, not `@health`),
+each preceded by its usage count, right-justified so the tag names line up:
+
+```
+2 bp
+1 health
+2 radio
+```
+
+Can't be combined with entry text, `-s/--search`, `-t/--tags`, or `-N`.
 
 ### Show the last N entries
 
@@ -273,9 +283,6 @@ Resolved in this order:
 
 ```toml
 # ~/.config/journal/config.toml
-[editor]
-args = "+{line}"
-
 [color]
 enabled = false
 
@@ -295,37 +302,6 @@ Search above) when neither `--color` nor `--no-color` is passed.
 template applied to the entry's own timestamp; `diff` selects
 `disabled`/`short`/`long`, the elapsed-time annotation's verbosity.
 
-#### Editor cursor positioning
-
-`journal`'s no-argument mode seeds a blank line for the cursor to land on,
-but *moving* the cursor there requires a command-line flag specific to your
-`$EDITOR` -- there's no flag that works across every editor, so it's opt-in
-via `[editor].args` above. `args` is parsed with the same shell-word splitting as `$EDITOR` itself
-(quoting works the same way), and `{line}` is replaced with the 1-indexed
-line number of the blank line where you should start typing. The resulting
-arguments are inserted right before the file path, ahead of anything else in
-`$EDITOR`.
-
-**vim/vi/nvim** understand `+N` as "open with the cursor on line N", which is
-all you need:
-
-```toml
-[editor]
-args = "+{line}"
-```
-
-If you'd rather land straight in insert mode instead of normal mode, chain a
-`-c` command (vim runs `+`/`-c` arguments in the order given):
-
-```toml
-[editor]
-args = "+{line} -c startinsert"
-```
-
-**nano** uses the same `+LINE` convention, so `args = "+{line}"` works there
-too. Other editors vary -- e.g. GUI editors that take a `file:line` argument
-instead -- so check your editor's documentation for its equivalent flag.
-
 ## Environment variables
 
 | Variable         | Purpose                                             |
@@ -343,7 +319,6 @@ instead -- so check your editor's documentation for its equivalent flag.
 | 0    | Success (entry appended/saved, or search found a match) |
 | 1    | Runtime error, or a search found no matches           |
 | 2    | Usage error (invalid flags/arguments)                 |
-| 130  | Editor flow interrupted (`Ctrl-C`/`SIGINT`/`SIGTERM`); the temporary edit buffer is cleaned up before exiting |
 
 ## Entry format
 

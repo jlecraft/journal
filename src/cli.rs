@@ -15,7 +15,7 @@ pub struct Cli {
     /// remain searchable right where you typed them. Pass "-" to read
     /// the entry text from stdin instead. If omitted entirely, opens
     /// $EDITOR (or vi) to compose a new entry.
-    #[arg(conflicts_with = "search")]
+    #[arg(conflicts_with_all = ["search", "all_tags"])]
     pub text: Option<String>,
 
     /// Show the last N entries, e.g. `-3`. Handled by scanning argv
@@ -27,7 +27,8 @@ pub struct Cli {
 
     /// Tags to append as their own line at the end of the entry, e.g.
     /// "bp health" or "@bp @health" -- bare words are automatically
-    /// prefixed with @.
+    /// prefixed with @. Only valid alongside entry text; the no-argument
+    /// $EDITOR flow doesn't seed anything into the buffer.
     #[arg(short = 't', long = "tags", value_name = "TAGS", conflicts_with = "search")]
     pub tags: Option<String>,
 
@@ -66,6 +67,13 @@ pub struct Cli {
     /// Only valid alongside -s/--search.
     #[arg(short = 'L', long = "lines-only")]
     pub lines_only: bool,
+
+    /// Print every unique tag in the journal, one per line, sorted
+    /// alphabetically and shown as bare words without the leading @, each
+    /// preceded by its usage count (right-justified so the tags line up).
+    /// Instead of appending or searching.
+    #[arg(long = "all-tags", conflicts_with_all = ["search", "tags"])]
+    pub all_tags: bool,
 
     /// Print diagnostic information to stderr: the resolved journal file,
     /// lock acquisition/release, and editor invocation details. Can be
@@ -145,6 +153,12 @@ impl Cli {
                 return Err("-L/--lines-only can only be used with -s/--search".to_string());
             }
         }
+        if self.tags.is_some() && self.text.is_none() {
+            return Err(
+                "-t/--tags requires entry text; the $EDITOR flow doesn't seed a tags line"
+                    .to_string(),
+            );
+        }
         if let Some(n) = self.last {
             if n == 0 {
                 return Err("-N must be a positive number".to_string());
@@ -155,8 +169,8 @@ impl Cli {
             if self.text.is_some() {
                 return Err("-N cannot be combined with entry text".to_string());
             }
-            if self.tags.is_some() {
-                return Err("-N cannot be combined with -t/--tags".to_string());
+            if self.all_tags {
+                return Err("-N cannot be combined with --all-tags".to_string());
             }
         }
         Ok(())
@@ -252,6 +266,28 @@ mod tests {
     }
 
     #[test]
+    fn validate_rejects_tags_without_entry_text() {
+        let cli = Cli {
+            text: None,
+            last: None,
+            tags: Some("bp".to_string()),
+            file: None,
+            search: None,
+            all: false,
+            limit: None,
+            lines_only: false,
+            verbose: false,
+            human: false,
+            color: false,
+            no_color: false,
+            all_tags: false,
+            no_headers: false,
+            help: None,
+        };
+        assert!(cli.validate().is_err());
+    }
+
+    #[test]
     fn validate_rejects_last_n_combined_with_search() {
         let cli = Cli {
             text: None,
@@ -266,6 +302,7 @@ mod tests {
             human: false,
             color: false,
             no_color: false,
+            all_tags: false,
             no_headers: false,
             help: None,
         };
@@ -287,6 +324,7 @@ mod tests {
             human: false,
             color: false,
             no_color: false,
+            all_tags: false,
             no_headers: false,
             help: None,
         };
@@ -308,6 +346,7 @@ mod tests {
             human: false,
             color: false,
             no_color: false,
+            all_tags: false,
             no_headers: false,
             help: None,
         };
@@ -329,6 +368,7 @@ mod tests {
             human: false,
             color: false,
             no_color: false,
+            all_tags: false,
             no_headers: false,
             help: None,
         };

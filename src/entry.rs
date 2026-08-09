@@ -306,22 +306,6 @@ impl Entry {
             .collect()
     }
 
-    /// Returns the byte offset in `text` where its last header-line-led
-    /// entry begins, or `None` if `text` contains no header line at all.
-    /// Used by editor mode to isolate the newly-composed entry from
-    /// everything before it, which is left untouched.
-    pub(crate) fn last_entry_start(text: &str) -> Option<usize> {
-        let mut offset = 0;
-        let mut last = None;
-        for line in text.split_inclusive('\n') {
-            let trimmed = line.strip_suffix('\n').unwrap_or(line);
-            if parse_header(trimmed).is_some() {
-                last = Some(offset);
-            }
-            offset += line.len();
-        }
-        last
-    }
 }
 
 /// Parses a header line into `(timestamp, raw_header, header_overflow)`.
@@ -735,25 +719,6 @@ mod tests {
         assert_eq!(entries.len(), 2);
         assert_eq!(entries[0].body, "para one\n\npara two");
         assert_eq!(entries[1].body, "next entry");
-    }
-
-    #[test]
-    fn last_entry_start_finds_offset_of_final_header() {
-        let file = "[2026-07-28 14:03:00]\nfirst\n\n[2026-07-29 09:00:00]\nsecond";
-        let offset = Entry::last_entry_start(file).unwrap();
-        assert_eq!(&file[offset..], "[2026-07-29 09:00:00]\nsecond");
-    }
-
-    #[test]
-    fn last_entry_start_finds_the_only_header_with_no_trailing_newline() {
-        let file = "[2026-07-28 14:03:00]";
-        let offset = Entry::last_entry_start(file).unwrap();
-        assert_eq!(offset, 0);
-    }
-
-    #[test]
-    fn last_entry_start_is_none_without_any_header_line() {
-        assert_eq!(Entry::last_entry_start("just some text\nno header here"), None);
     }
 
     /// `then`/`now` exactly `secs` seconds apart, `then` in the past.
