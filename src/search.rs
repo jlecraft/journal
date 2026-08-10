@@ -3,6 +3,9 @@ use crate::entry::Entry;
 pub struct SearchOptions {
     pub all: bool,
     pub limit: Option<usize>,
+    /// Sort results newest to oldest instead of the default oldest to
+    /// newest (`-r/--reverse-sort`).
+    pub reverse: bool,
 }
 
 /// A parsed search term (§3): either an `@tag` requiring a full-word
@@ -37,8 +40,9 @@ fn term_matches(term: &Term, entry: &Entry, haystack: &str) -> bool {
     }
 }
 
-/// Returns entries matching `query` under the given options, in the
-/// order they appear in `entries`, truncated to `opts.limit` if set.
+/// Returns entries matching `query` under the given options, sorted
+/// oldest to newest by resolved timestamp (§2.2) -- or newest to oldest
+/// with `opts.reverse` -- and truncated to `opts.limit` if set.
 pub fn search<'a>(entries: &'a [Entry], query: &str, opts: &SearchOptions) -> Vec<&'a Entry> {
     let terms = parse_terms(query);
     if terms.is_empty() {
@@ -57,10 +61,23 @@ pub fn search<'a>(entries: &'a [Entry], query: &str, opts: &SearchOptions) -> Ve
         })
         .collect();
 
+    sort_by_date(&mut matches, opts.reverse, |e| *e);
+
     if let Some(limit) = opts.limit {
         matches.truncate(limit);
     }
     matches
+}
+
+/// Sorts by resolved timestamp (§2.2), oldest first, then reverses the
+/// result if `reverse` is set -- so ties keep their original relative
+/// order in the default (oldest-to-newest) direction, and that same
+/// relative order simply runs backwards under `-r/--reverse-sort`.
+fn sort_by_date<T>(items: &mut [T], reverse: bool, entry_of: impl Fn(&T) -> &Entry) {
+    items.sort_by_key(|item| entry_of(item).timestamp.resolved());
+    if reverse {
+        items.reverse();
+    }
 }
 
 fn line_matches_term(line: &str, lower_line: &str, term: &Term) -> bool {
@@ -111,6 +128,8 @@ pub fn search_lines<'a>(
             results.push((e, lines));
         }
     }
+
+    sort_by_date(&mut results, opts.reverse, |(e, _)| *e);
 
     if let Some(limit) = opts.limit {
         results.truncate(limit);
@@ -254,7 +273,7 @@ mod tests {
     }
 
     fn opts(all: bool, limit: Option<usize>) -> SearchOptions {
-        SearchOptions { all, limit }
+        SearchOptions { all, limit, reverse: false }
     }
 
     #[test]
@@ -319,6 +338,63 @@ mod tests {
         let entries = vec![e(&[], "match one"), e(&[], "match two"), e(&[], "match three")];
         let results = search(&entries, "match", &opts(false, Some(2)));
         assert_eq!(results.len(), 2);
+    }
+
+    #[test]
+    fn results_are_sorted_oldest_to_newest_by_default_regardless_of_file_order() {
+        let entries = vec![
+            Entry::new(ts(2026, 6, 15), "match middle".to_string()),
+            Entry::new(ts(2026, 1, 1), "match oldest".to_string()),
+            Entry::new(ts(2026, 12, 31), "match newest".to_string()),
+        ];
+        let results = search(&entries, "match", &opts(false, None));
+        assert_eq!(
+            results.iter().map(|e| e.body.as_str()).collect::<Vec<_>>(),
+            vec!["match oldest", "match middle", "match newest"]
+        );
+    }
+
+    #[test]
+    fn reverse_sort_orders_newest_to_oldest() {
+        let entries = vec![
+            Entry::new(ts(2026, 6, 15), "match middle".to_string()),
+            Entry::new(ts(2026, 1, 1), "match oldest".to_string()),
+            Entry::new(ts(2026, 12, 31), "match newest".to_string()),
+        ];
+        let mut reversed = opts(false, None);
+        reversed.reverse = true;
+        let results = search(&entries, "match", &reversed);
+        assert_eq!(
+            results.iter().map(|e| e.body.as_str()).collect::<Vec<_>>(),
+            vec!["match newest", "match middle", "match oldest"]
+        );
+    }
+
+    #[test]
+    fn limit_applies_after_sorting_so_it_caps_from_the_sorted_end() {
+        let entries = vec![
+            Entry::new(ts(2026, 6, 15), "match middle".to_string()),
+            Entry::new(ts(2026, 1, 1), "match oldest".to_string()),
+            Entry::new(ts(2026, 12, 31), "match newest".to_string()),
+        ];
+        let results = search(&entries, "match", &opts(false, Some(2)));
+        assert_eq!(
+            results.iter().map(|e| e.body.as_str()).collect::<Vec<_>>(),
+            vec!["match oldest", "match middle"]
+        );
+    }
+
+    #[test]
+    fn search_lines_results_are_sorted_oldest_to_newest_by_default() {
+        let entries = vec![
+            Entry::new(ts(2026, 6, 15), "match middle".to_string()),
+            Entry::new(ts(2026, 1, 1), "match oldest".to_string()),
+        ];
+        let results = search_lines(&entries, "match", &opts(false, None));
+        assert_eq!(
+            results.iter().map(|(e, _)| e.body.as_str()).collect::<Vec<_>>(),
+            vec!["match oldest", "match middle"]
+        );
     }
 
     #[test]

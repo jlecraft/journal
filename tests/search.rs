@@ -287,6 +287,74 @@ fn lines_only_without_search_is_a_usage_error() {
         .code(2);
 }
 
+/// Entries deliberately out of chronological order on disk, so sort-order
+/// assertions can't be satisfied by accident just because file order and
+/// date order happen to coincide.
+fn out_of_order_fixture() -> (TempDir, std::path::PathBuf) {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("journal.txt");
+    fs::write(
+        &path,
+        "[2026-07-03 10:00:00]\nmatch middle\n\n\
+         [2026-07-01 08:00:00]\nmatch oldest\n\n\
+         [2026-07-05 12:00:00]\nmatch newest\n\n",
+    )
+    .unwrap();
+    (dir, path)
+}
+
+#[test]
+fn search_results_are_sorted_oldest_to_newest_regardless_of_file_order() {
+    let (_dir, path) = out_of_order_fixture();
+    let out = cmd()
+        .arg("-f")
+        .arg(&path)
+        .args(["-s", "match"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let s = String::from_utf8(out).unwrap();
+    let oldest = s.find("match oldest").unwrap();
+    let middle = s.find("match middle").unwrap();
+    let newest = s.find("match newest").unwrap();
+    assert!(oldest < middle && middle < newest);
+}
+
+#[test]
+fn dash_r_reverses_the_sort_to_newest_to_oldest() {
+    let (_dir, path) = out_of_order_fixture();
+    let out = cmd()
+        .arg("-f")
+        .arg(&path)
+        .args(["-s", "match"])
+        .arg("-r")
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let s = String::from_utf8(out).unwrap();
+    let oldest = s.find("match oldest").unwrap();
+    let middle = s.find("match middle").unwrap();
+    let newest = s.find("match newest").unwrap();
+    assert!(newest < middle && middle < oldest);
+}
+
+#[test]
+fn dash_r_without_search_is_a_usage_error() {
+    let (_dir, path) = fixture();
+    cmd()
+        .arg("-f")
+        .arg(&path)
+        .arg("-r")
+        .arg("some entry")
+        .assert()
+        .failure()
+        .code(2);
+}
+
 #[test]
 fn verbose_flag_prints_match_count_to_stderr_only() {
     let (_dir, path) = fixture();

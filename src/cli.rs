@@ -68,6 +68,11 @@ pub struct Cli {
     #[arg(short = 'L', long = "lines-only")]
     pub lines_only: bool,
 
+    /// Reverse the sort order of search results: newest to oldest, instead
+    /// of the default oldest to newest. Only valid alongside -s/--search.
+    #[arg(short = 'r', long = "reverse-sort")]
+    pub reverse_sort: bool,
+
     /// Print every unique tag in the journal, one per line, sorted
     /// alphabetically and shown as bare words without the leading @, each
     /// preceded by its usage count (right-justified so the tags line up).
@@ -151,6 +156,9 @@ impl Cli {
             }
             if self.lines_only {
                 return Err("-L/--lines-only can only be used with -s/--search".to_string());
+            }
+            if self.reverse_sort {
+                return Err("-r/--reverse-sort can only be used with -s/--search".to_string());
             }
         }
         if self.tags.is_some() && self.text.is_none() {
@@ -276,6 +284,7 @@ mod tests {
             all: false,
             limit: None,
             lines_only: false,
+            reverse_sort: false,
             verbose: false,
             human: false,
             color: false,
@@ -298,6 +307,7 @@ mod tests {
             all: false,
             limit: None,
             lines_only: false,
+            reverse_sort: false,
             verbose: false,
             human: false,
             color: false,
@@ -320,6 +330,7 @@ mod tests {
             all: false,
             limit: None,
             lines_only: false,
+            reverse_sort: false,
             verbose: false,
             human: false,
             color: false,
@@ -342,6 +353,7 @@ mod tests {
             all: false,
             limit: None,
             lines_only: false,
+            reverse_sort: false,
             verbose: false,
             human: false,
             color: false,
@@ -364,6 +376,30 @@ mod tests {
             all: false,
             limit: None,
             lines_only: true,
+            reverse_sort: false,
+            verbose: false,
+            human: false,
+            color: false,
+            no_color: false,
+            all_tags: false,
+            no_headers: false,
+            help: None,
+        };
+        assert!(cli.validate().is_err());
+    }
+
+    #[test]
+    fn validate_rejects_reverse_sort_without_search() {
+        let cli = Cli {
+            text: Some("some entry".to_string()),
+            last: None,
+            tags: None,
+            file: None,
+            search: None,
+            all: false,
+            limit: None,
+            lines_only: false,
+            reverse_sort: true,
             verbose: false,
             human: false,
             color: false,

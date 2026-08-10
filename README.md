@@ -25,7 +25,8 @@ slept 7 hours
   (bare words are auto-prefixed with `@` and appended as their own line)
 - Search by tag (exact match) or keyword (case-insensitive substring), with
   AND/OR term combining, a result limit, and an optional lines-only view
-  (`-L`) that prints just the matching lines under each entry's header
+  (`-L`) that prints just the matching lines under each entry's header;
+  results sort oldest to newest by default, reversible with `-r`
 - List every unique tag in the journal with `--all-tags`
 - Show the last N entries with `-N` (e.g. `journal -3`)
 - Plain, exact timestamps by default; `-h/--human` switches to a
@@ -140,6 +141,19 @@ journal -s "fm radio" -a -L     # header, then only lines containing BOTH "fm" a
 Combined with `-a/--all`, `-L` requires both terms on the *same* line to
 qualify -- stricter than plain `-a`, which is satisfied if the terms are
 spread across different lines anywhere in the entry.
+
+Results are sorted oldest to newest by entry date, regardless of where they
+happen to fall in the file. Pass `-r/--reverse-sort` to flip that to newest
+to oldest:
+
+```sh
+journal -s "@bp"                # oldest matching @bp entry first
+journal -s "@bp" -r             # newest matching @bp entry first
+```
+
+`--limit` is applied after sorting, so it caps from whichever end you're
+sorted toward -- the oldest N matches by default, or the newest N with
+`-r`.
 
 Matched terms can be highlighted (bold red, like `grep --color`), but it's
 off by default -- pass `--color` to turn it on for one run:

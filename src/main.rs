@@ -42,6 +42,7 @@ fn run(cli: Cli) -> Result<i32> {
             cli.all,
             cli.limit,
             cli.lines_only,
+            cli.reverse_sort,
             cli.verbose,
             colorize,
             &display_opts,
@@ -178,13 +179,14 @@ fn run_search(
     all: bool,
     limit: Option<usize>,
     lines_only: bool,
+    reverse: bool,
     verbose: bool,
     colorize: bool,
     display_opts: &DisplayOpts,
 ) -> Result<i32> {
     let contents = storage::read_contents(path)?;
     let entries = Entry::parse_all(&contents);
-    let opts = search::SearchOptions { all, limit };
+    let opts = search::SearchOptions { all, limit, reverse };
 
     if lines_only {
         let results = search::search_lines(&entries, query, &opts);

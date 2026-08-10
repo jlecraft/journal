@@ -78,8 +78,12 @@ this pre-parse step or with each other (e.g. `-a`/`--limit`/`-L` all require
   the default `-s` view) and `search_lines()` (per-line, for `-L`/
   `--lines-only` — a line must satisfy the term condition itself, so `-a`
   combined with `-L` is *stricter* than plain `-a`: both terms must be on
-  the same line, not just somewhere in the entry). Also owns `highlight()`,
-  which wraps matched text in ANSI bold-red.
+  the same line, not just somewhere in the entry). Both sort matches by
+  resolved timestamp via the shared `sort_by_date` helper (oldest first,
+  or newest first with `-r/--reverse-sort`) before `SearchOptions.limit`
+  truncates the list, so `--limit` always caps from whichever end sorting
+  landed on. Also owns `highlight()`, which wraps matched text in ANSI
+  bold-red.
 - `storage.rs` — journal file path resolution (`-f` > `$JOURNAL_FILE` > XDG
   data dir) and all file I/O. Writes go through `with_exclusive_lock`, which
   locks a stable `<path>.lock` sidecar file rather than the journal file

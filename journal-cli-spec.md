@@ -166,11 +166,13 @@ journal -s "fm radio" -a        # entries containing "fm" AND "radio"
 journal -s "linux+kernel"       # entries containing the literal phrase "linux kernel"
 journal -s "th" --limit 5       # cap the number of results
 journal -s "fm radio" -L        # print only the matching lines, not full entries
+journal -s "fm radio" -r        # newest match first instead of oldest
 ```
 
-`-a/--all`, `--limit`, and `-L/--lines-only` are usage errors (exit code 2)
-unless `-s/--search` is also given. `-v/--verbose` (§12) has no such
-restriction — it's orthogonal to every mode in this section.
+`-a/--all`, `--limit`, `-L/--lines-only`, and `-r/--reverse-sort` are usage
+errors (exit code 2) unless `-s/--search` is also given. `-v/--verbose`
+(§12) has no such restriction — it's orthogonal to every mode in this
+section.
 
 #### 3.4.1 Term parsing
 
@@ -234,6 +236,20 @@ Resolution order, highest precedence first:
 
 A search that finds no matches (in either mode) exits `1` with no output, the
 same convention as `grep`. A search that finds at least one match exits `0`.
+
+#### 3.4.6 Sort order (`-r`/`--reverse-sort`)
+
+Matching entries (whole-entry mode, §3.4.2) or matching `(entry, lines)`
+pairs (lines-only mode, §3.4.3) are sorted by the entry's resolved
+timestamp (§2.2) before anything else happens to them — oldest first by
+default, regardless of where an entry happens to fall in the file (a
+hand-edited or backdated entry need not be in file order). `-r/--reverse-sort`
+reverses that order to newest first; like `-a`/`--limit`/`-L`, it's a usage
+error (exit code 2) without `-s/--search`.
+
+Sorting happens before `--limit` truncates the result list, so `--limit N`
+always caps from the end you're sorted toward: the `N` oldest matches by
+default, or the `N` newest with `-r`.
 
 ## 4. Human-Facing Display Format
 
