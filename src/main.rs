@@ -57,6 +57,28 @@ fn run(cli: Cli) -> Result<i32> {
         return run_all_tags(&path, cli.verbose);
     }
 
+    if cli.interactive {
+        let stdin = std::io::stdin();
+        let mut input = stdin.lock();
+        let stderr = std::io::stderr();
+        let mut prompts = stderr.lock();
+        let Some(interactive) = journal::interactive::read_interactive(&mut input, &mut prompts)
+            .context("failed to read interactive entry")?
+        else {
+            return Ok(1);
+        };
+        let tags = entry::tags_line_from_flag(&interactive.tags);
+        let submitted_at = chrono::Local::now().naive_local();
+        // Normalize terminal newline(s) before placing prompted tags on the
+        // final body line, just as Entry normally normalizes an entry body.
+        let normalized_body = Entry::new(submitted_at, interactive.body).body;
+        let body = combine_body_and_tags(&normalized_body, tags.as_deref());
+        let e = Entry::new_with_shape(submitted_at, body, interactive.timestamp_shape);
+        storage::append_entry(&path, &e.render(), cli.verbose)?;
+        vlog(cli.verbose, format!("appended entry at {}", e.timestamp.render()));
+        return Ok(0);
+    }
+
     match cli.text {
         Some(text) => {
             // `-` means "read entry text from stdin" (§6.5), the standard
@@ -87,15 +109,19 @@ fn read_stdin_text() -> Result<String> {
 /// recognized as a tag by its shape wherever it appears, not by position.
 fn append(path: &Path, text: &str, tags_flag: Option<&str>, verbose: bool) -> Result<()> {
     let tags_line = tags_flag.and_then(entry::tags_line_from_flag);
-    let body = match tags_line {
-        Some(line) if text.is_empty() => line,
-        Some(line) => format!("{text}\n{line}"),
-        None => text.to_string(),
-    };
+    let body = combine_body_and_tags(text, tags_line.as_deref());
     let e = Entry::now(body);
     storage::append_entry(path, &e.render(), verbose)?;
     vlog(verbose, format!("appended entry at {}", e.timestamp.render()));
     Ok(())
+}
+
+fn combine_body_and_tags(text: &str, tags_line: Option<&str>) -> String {
+    match tags_line {
+        Some(line) if text.is_empty() => line.to_string(),
+        Some(line) => format!("{text}\n{line}"),
+        None => text.to_string(),
+    }
 }
 
 /// Prints the last `n` entries in the journal (oldest to newest, same as

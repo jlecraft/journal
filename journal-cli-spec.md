@@ -27,8 +27,8 @@ Entry body, line 2 (optional)
 
 - **Header line:** a timestamp in `[YYYY-MM-DD HH:MM:SS]` format, and nothing
   else. The timestamp is always alone on its own line. This is the form the
-  tool itself always writes; a hand-typed or hand-edited header may use a
-  less precise form instead (§2.2).
+  normal append modes write. Interactive mode may deliberately write one of
+  the shorthand forms described in §2.2.
 - **Body:** any number of lines, including blank lines. `@tag` tokens may
   appear anywhere in the body — there is no separate structured storage for
   tags.
@@ -103,9 +103,10 @@ human actually wrote down.
 **This flexibility is a display-time affordance only — what's on disk is
 never rewritten because of it.** The tool itself always writes the full
 `YYYY-MM-DD HH:MM:SS` form (§2) for a genuinely new entry appended via
-`journal "..."` or stdin, but a header that already exists on disk in a
+`journal "..."` or stdin. Interactive mode (§3.2) is the exception: it can
+store a selected shorthand shape. A header that already exists on disk in a
 shorter hand-typed form — including one a human types directly into the
-journal file via editor mode (§3.2), since nothing is pre-seeded there —
+journal file via editor mode (§3.3), since nothing is pre-seeded there —
 keeps that exact text forever, byte-for-byte. `journal` only ever
 *expands* a header for the reader (§4); it doesn't "fix" what was
 intentionally written by hand.
@@ -127,7 +128,32 @@ stdin instead (the standard Unix filter-tool convention). `-t/--tags` and
 positional `TEXT` both conflict with `-s/--search` at the argument-parsing
 level (exit code 2 if combined).
 
-### 3.2 Compose via `$EDITOR` (no arguments)
+### 3.2 Interactive append
+
+`-i/--interactive` runs a prompted append workflow without requiring a TTY.
+All prompts and validation messages go to stderr and each prompt is flushed:
+
+```text
+Tags (space-separated, optional):
+Timestamp [F/full, y/year, d/month-day, t/time] (default F):
+Entry (press Ctrl-D on an empty line to submit):
+```
+
+Tags are optional and use the same normalization as `-t/--tags`. Timestamp
+choices are case-insensitive: empty, `F`, or `full` stores
+`YYYY-MM-DD HH:MM:SS`; `y` or `year` stores `YYYY`; `d`, `date`, or
+`month-day` stores `MM-DD`; and `t` or `time` stores `HH:MM:SS`. Invalid
+choices print an explanation and repeat the timestamp prompt.
+
+The body is multiline and EOF submits it; empty bodies are valid. EOF while
+reading tags or choosing the timestamp aborts with exit code 1 and writes
+nothing. The current local time is captured only after body submission, and
+the resulting entry uses the normal append lock and verbose diagnostics.
+Interactive mode can be combined only with `-f/--file` and `-v/--verbose`;
+all positional text, tags, search/list modes, and display flags are usage
+errors (exit code 2).
+
+### 3.3 Compose via `$EDITOR` (no arguments)
 
 Running `journal` with no positional text opens the resolved journal file
 directly in `$EDITOR` (falling back to `vi`) — see §6 for the full
@@ -407,7 +433,7 @@ Resolved in this precedence order:
 
 ## 6. Editor Integration
 
-`$EDITOR` is used for the no-argument compose flow (§3.2); if unset, falls
+`$EDITOR` is used for the no-argument compose flow (§3.3); if unset, falls
 back to `vi`. `$EDITOR`'s value is shell-word split (so quoted paths with
 spaces work), giving a program name and its own leading arguments.
 
@@ -463,7 +489,7 @@ documented default, table by table and key by key.
 
 | Variable | Purpose |
 |---|---|
-| `EDITOR` | Editor launched by no-argument invocation (§3.2, §6); falls back to `vi` |
+| `EDITOR` | Editor launched by no-argument invocation (§3.3, §6); falls back to `vi` |
 | `JOURNAL_FILE` | Journal file path override (§5) |
 | `XDG_DATA_HOME` | Base directory for the default journal file location (§5) |
 | `XDG_CONFIG_HOME` | Base directory for the config file (§7) |
@@ -474,7 +500,7 @@ documented default, table by table and key by key.
 | Code | Meaning |
 |---|---|
 | 0 | Success — entry appended/saved, `-N` printed (or the journal was empty), or a search found at least one match |
-| 1 | Runtime error (I/O failure, editor exited non-zero, etc.), or a search found no matches |
+| 1 | Runtime error (I/O failure, editor exited non-zero, etc.), early EOF in interactive setup, or a search found no matches |
 | 2 | Usage error — an invalid flag combination, caught either by `clap` itself (e.g. `-s` combined with `-t`) or by explicit validation (e.g. `-a` without `-s`, `-N` combined with `-s`, `-t/--tags` without entry text) |
 
 ## 10. Concurrency / Write Safety
@@ -525,7 +551,8 @@ automatic `-h` short flag for help is disabled and `--help` only has a long
 form. A man page is checked in at `man/journal.1`, generated from the same
 flag definitions via `cargo run --example man` (not regenerated
 automatically at build time — see `CLAUDE.md` for the regeneration
-workflow).
+workflow). The end of `--help` also prints the currently resolved journal
+file path, honoring the usual `-f` > `$JOURNAL_FILE` > XDG precedence.
 
 ## 14. Possible Future Work
 

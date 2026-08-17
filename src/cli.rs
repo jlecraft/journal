@@ -1,4 +1,7 @@
-use clap::Parser;
+use clap::{CommandFactory, FromArgMatches, Parser};
+
+const AFTER_HELP: &str =
+    "Show the last N entries with -N, e.g. `journal -3` prints the 3 most recent entries.";
 
 /// `journal` -- append timestamped, taggable entries to a plain-text
 /// journal file, and search that file by tag or keyword.
@@ -7,10 +10,15 @@ use clap::Parser;
     name = "journal",
     version,
     about,
-    after_help = "Show the last N entries with -N, e.g. `journal -3` prints the 3 most recent entries.",
+    after_help = AFTER_HELP,
     disable_help_flag = true
 )]
 pub struct Cli {
+    /// Prompt for tags and timestamp shape, then read a multiline entry
+    /// from stdin until EOF. Prompts are written to stderr.
+    #[arg(short = 'i', long = "interactive")]
+    pub interactive: bool,
+
     /// Entry text to append. @tags may appear anywhere in the text and
     /// remain searchable right where you typed them. Pass "-" to read
     /// the entry text from stdin instead. If omitted entirely, opens
@@ -139,7 +147,20 @@ impl Cli {
     fn parse_from_argv(args: impl Iterator<Item = String>) -> Self {
         let mut args: Vec<String> = args.collect();
         let last = extract_last_n_flag(&mut args);
-        let mut cli = Cli::parse_from(args);
+        let mut command = Cli::command();
+        if args.iter().any(|arg| arg == "--help") {
+            let cli_file = file_arg(&args);
+            let path = crate::storage::resolve_path(cli_file.as_deref()).unwrap_or_else(|err| {
+                eprintln!("journal: {err:#}");
+                std::process::exit(1);
+            });
+            command = command.after_help(format!(
+                "{AFTER_HELP}\n\nCurrent journal file: {}",
+                path.display()
+            ));
+        }
+        let matches = command.get_matches_from(args);
+        let mut cli = Cli::from_arg_matches(&matches).expect("clap arguments should match Cli");
         cli.last = last;
         cli
     }
@@ -147,6 +168,25 @@ impl Cli {
     /// Validates flag combinations clap's derive attributes can't
     /// reliably express here. Returns a usage-error message on failure.
     pub fn validate(&self) -> Result<(), String> {
+        if self.interactive {
+            let incompatible = self.text.is_some()
+                || self.tags.is_some()
+                || self.search.is_some()
+                || self.last.is_some()
+                || self.all_tags
+                || self.all
+                || self.limit.is_some()
+                || self.lines_only
+                || self.reverse_sort
+                || self.human
+                || self.color
+                || self.no_color
+                || self.no_headers;
+            if incompatible {
+                return Err("--interactive can only be combined with -f/--file and -v/--verbose"
+                    .to_string());
+            }
+        }
         if self.search.is_none() {
             if self.all {
                 return Err("-a/--all can only be used with -s/--search".to_string());
@@ -183,6 +223,25 @@ impl Cli {
         }
         Ok(())
     }
+}
+
+/// Finds an explicit journal path before clap handles `--help`, whose help
+/// action exits during parsing. This lets the dynamic help footer reflect
+/// the same `-f/--file` precedence as a normal invocation.
+fn file_arg(args: &[String]) -> Option<String> {
+    let mut iter = args.iter().skip(1);
+    while let Some(arg) = iter.next() {
+        if arg == "--" {
+            break;
+        }
+        if arg == "-f" || arg == "--file" {
+            return iter.next().cloned();
+        }
+        if let Some(path) = arg.strip_prefix("--file=") {
+            return Some(path.to_string());
+        }
+    }
+    None
 }
 
 /// Flags that consume the next argv token as their value. `-N` detection
@@ -276,6 +335,7 @@ mod tests {
     #[test]
     fn validate_rejects_tags_without_entry_text() {
         let cli = Cli {
+            interactive: false,
             text: None,
             last: None,
             tags: Some("bp".to_string()),
@@ -299,6 +359,7 @@ mod tests {
     #[test]
     fn validate_rejects_last_n_combined_with_search() {
         let cli = Cli {
+            interactive: false,
             text: None,
             last: Some(3),
             tags: None,
@@ -322,6 +383,7 @@ mod tests {
     #[test]
     fn validate_rejects_zero_as_last_n() {
         let cli = Cli {
+            interactive: false,
             text: None,
             last: Some(0),
             tags: None,
@@ -345,6 +407,7 @@ mod tests {
     #[test]
     fn validate_accepts_bare_last_n() {
         let cli = Cli {
+            interactive: false,
             text: None,
             last: Some(3),
             tags: None,
@@ -368,6 +431,7 @@ mod tests {
     #[test]
     fn validate_rejects_lines_only_without_search() {
         let cli = Cli {
+            interactive: false,
             text: Some("some entry".to_string()),
             last: None,
             tags: None,
@@ -391,6 +455,7 @@ mod tests {
     #[test]
     fn validate_rejects_reverse_sort_without_search() {
         let cli = Cli {
+            interactive: false,
             text: Some("some entry".to_string()),
             last: None,
             tags: None,

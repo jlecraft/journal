@@ -19,8 +19,8 @@ slept 7 hours
 
 ## Features
 
-- Append timestamped entries from the command line or stdin, or open the
-  journal file directly in `$EDITOR` with no arguments
+- Append timestamped entries from the command line, stdin, or the prompted
+  `-i/--interactive` workflow, or open the journal in `$EDITOR`
 - Tag entries by typing `@tag` anywhere in the text, or via `-t/--tags`
   (bare words are auto-prefixed with `@` and appended as their own line)
 - Search by tag (exact match) or keyword (case-insensitive substring), with
@@ -99,6 +99,21 @@ Pipe entry text in instead of passing it as an argument:
 ```sh
 echo "back from a walk @exercise" | journal -
 ```
+
+For a prompted multiline append, use interactive mode:
+
+```sh
+journal --interactive
+```
+
+It prompts on stderr for optional space-separated tags, then for the stored
+timestamp shape (full by default, or year-only, month-day-only, or time-only),
+then reads the entry body until EOF. In a terminal, press Ctrl-D on an empty
+line to submit. The same prompts work with piped input for scripting. Bare
+tags gain an `@` prefix and the normalized tags are stored on the final body
+line. EOF at either of the first two prompts aborts without writing; EOF while
+reading the body submits it. Only `-f/--file` and `-v/--verbose` may be
+combined with `--interactive`.
 
 Run `journal` with no arguments to open the journal file itself directly in
 `$EDITOR` (falling back to `vi`) -- nothing is pre-inserted, no timestamp,

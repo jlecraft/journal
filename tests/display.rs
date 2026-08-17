@@ -226,6 +226,39 @@ fn no_header_singular_does_not_appear_in_help_text() {
 }
 
 #[test]
+fn help_shows_the_current_journal_file_and_keeps_existing_footer() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("current-journal.txt");
+    let out = cmd()
+        .env("JOURNAL_FILE", &path)
+        .arg("--help")
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let s = String::from_utf8(out).unwrap();
+    assert!(s.contains("Show the last N entries with -N"));
+    assert!(s.contains(&format!("Current journal file: {}", path.display())));
+}
+
+#[test]
+fn help_journal_file_honors_explicit_file_option() {
+    let dir = tempfile::tempdir().unwrap();
+    let env_path = dir.path().join("from-env.txt");
+    let explicit_path = dir.path().join("from-file-option.txt");
+    cmd()
+        .env("JOURNAL_FILE", env_path)
+        .args(["--file", explicit_path.to_str().unwrap(), "--help"])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains(format!(
+            "Current journal file: {}",
+            explicit_path.display()
+        )));
+}
+
+#[test]
 fn search_output_has_no_color_codes_by_default() {
     let (_dir, path) = searchable_fixture();
     let out = cmd()

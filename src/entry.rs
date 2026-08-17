@@ -7,6 +7,28 @@ use serde::Deserialize;
 /// `Timestamp` and `parse_timestamp_text`).
 pub const TIMESTAMP_FMT: &str = "%Y-%m-%d %H:%M:%S";
 
+/// The timestamp shape to store for a newly created interactive entry.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub enum TimestampShape {
+    #[default]
+    Full,
+    Year,
+    MonthDay,
+    Time,
+}
+
+impl TimestampShape {
+    fn format(self, timestamp: NaiveDateTime) -> String {
+        let format = match self {
+            Self::Full => TIMESTAMP_FMT,
+            Self::Year => "%Y",
+            Self::MonthDay => "%m-%d",
+            Self::Time => "%H:%M:%S",
+        };
+        timestamp.format(format).to_string()
+    }
+}
+
 /// How `-h/--human` renders the elapsed-time annotation next to the
 /// timestamp (`[timestamp].diff` in config.toml). Unlike `format`, this is
 /// no longer a free-form template the user writes -- just a choice of
@@ -166,6 +188,18 @@ impl Entry {
         Self::new(Local::now().naive_local(), body)
     }
 
+    /// Creates an entry at `timestamp` while retaining only the selected
+    /// timestamp components in its on-disk header.
+    pub fn new_with_shape(
+        timestamp: NaiveDateTime,
+        body: impl Into<String>,
+        shape: TimestampShape,
+    ) -> Self {
+        let mut entry = Self::new(timestamp, body);
+        entry.raw_header = Some(shape.format(timestamp));
+        entry
+    }
+
     /// Every `@tag` token found anywhere in the body, in the order it
     /// appears. A token counts as a tag purely by its `@\S+` shape (§2.1)
     /// -- there's no separate storage to consult.
@@ -184,7 +218,7 @@ impl Entry {
     /// hand-typed shorthand timestamp (§2.2) is never "fixed" back to
     /// full precision just because the entry passed through the tool
     /// again (e.g. editor mode re-rendering the entry it just seeded,
-    /// per §3.2). Only an entry with no prior text at all (freshly built
+    /// per §3.3). Only an entry with no prior text at all (freshly built
     /// via `new`/`now`, i.e. a genuinely new append) falls back to
     /// `timestamp`'s canonical full-precision form.
     pub fn render(&self) -> String {
