@@ -20,8 +20,8 @@ fn fixed_entry_fixture() -> (TempDir, std::path::PathBuf) {
 }
 
 /// An entry timestamped exactly 3 days before "now" (computed at fixture
-/// creation time), for exercising `-h/--human`'s diff annotation (e.g. the
-/// default `short` style renders this as `3d`) without depending on
+/// creation time), for exercising `-h/--human-readable`'s diff annotation (e.g. the
+/// default `short` style renders this as `3d HH:MM:SS ago`) without depending on
 /// wall-clock time at assertion time.
 fn three_days_ago_fixture() -> (TempDir, std::path::PathBuf, chrono::NaiveDateTime) {
     let dir = tempfile::tempdir().unwrap();
@@ -72,7 +72,7 @@ fn human_flag_shows_configured_format_and_short_diff_by_default() {
         .clone();
     let s = String::from_utf8(out).unwrap();
     assert!(s.starts_with(&format!("### {}", then.format("%Y-%m-%d %H:%M"))));
-    assert!(s.contains("(3d)"));
+    assert!(s.contains("(3d 00:00:00 ago)"));
 }
 
 #[test]

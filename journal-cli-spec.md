@@ -336,7 +336,7 @@ free-form formatting:
 | `diff` value | Behavior |
 |---|---|
 | `disabled` | No annotation at all — just the date, no parens. |
-| `short` (default) | At most the two highest-order units starting from the first non-zero one, abbreviated, no direction word: `3d, 4h`. |
+| `short` (default) | Every non-zero calendar unit followed by a zero-padded clock and direction: `3d 04:05:06 ago`. |
 | `long` | At most the three highest-order units starting from the first non-zero one, spelled out and pluralized, with a trailing direction word: `3 days, 4 hours ago`. |
 
 Both styles are built from the same underlying elapsed-time breakdown: the
@@ -345,12 +345,21 @@ days, hours, minutes, and seconds using real calendar arithmetic -- actual
 month lengths and leap years, not a fixed-length approximation (e.g. an
 entry from exactly one calendar year and one day ago always shows `1 year,
 1 day`, regardless of whether that year happened to be a leap year). The
-unit selection rule is the same for both styles, differing only in the
-window size and how units are worded:
+styles render that breakdown differently.
+
+`short` prepends each non-zero calendar component as `Ny`, `Nm`, and `Nd`,
+in that order. Zero years, months, or days are omitted. Hours, minutes, and
+seconds are always present as a zero-padded `HH:MM:SS` clock, including when
+all three are zero. A direction suffix is always present: `ago` for a past
+or equal timestamp and `from now` for a future timestamp. Thus a full value
+may look like `52y 10m 13d 14:30:58 ago`, while 30 seconds is
+`00:00:30 ago`.
+
+`long` uses this unit-selection rule:
 
 1. Find the highest-order unit that's non-zero (skipping any leading zero
    units — e.g. `years`/`months` being zero for a recent entry). This
-   anchors a fixed-size window: 2 units wide for `short`, 3 for `long`,
+   anchors a fixed-size window 3 units wide,
    starting at that unit and running downward (e.g. an anchor of `days`
    with a 3-unit window covers `days`/`hours`/`minutes`, and nothing else
    — never `seconds`).
@@ -368,23 +377,19 @@ window size and how units are worded:
 4. If every unit is zero, fall back to `0 seconds`, so there's always
    something to show.
 
-`long` mode ends with a trailing direction word — `ago` for a past
-timestamp, `from now` for a future one (e.g. a backdated/postdated entry).
-`short` mode has no direction word at all, by design — it's meant to be
-compact, not fully self-describing. Examples (elapsed time → `long` →
-`short`):
+`long` also ends with `ago` for a past timestamp or `from now` for a future
+one. Examples (elapsed time → `long` → `short`):
 
 | Elapsed | `long` | `short` |
 |---|---|---|
-| 30 seconds | `30 seconds ago` | `30s` |
-| 15 min, 22 sec | `15 minutes, 22 seconds ago` | `15m, 22s` |
-| 3 hr, 1 min, 16 sec | `3 hours, 1 minute, 16 seconds ago` | `3h, 1m` |
-| 24 days, 13 hours, 1 min | `24 days, 13 hours, 1 minute ago` | `24d, 13h` |
-| 29 days, 10 sec | `29 days ago` | `29d` |
+| 30 seconds | `30 seconds ago` | `00:00:30 ago` |
+| 15 min, 22 sec | `15 minutes, 22 seconds ago` | `00:15:22 ago` |
+| 3 hr, 1 min, 16 sec | `3 hours, 1 minute, 16 seconds ago` | `03:01:16 ago` |
+| 24 days, 13 hours, 1 min | `24 days, 13 hours, 1 minute ago` | `24d 13:01:00 ago` |
+| 29 days, 10 sec | `29 days ago` | `29d 00:00:10 ago` |
 
-Note the last row: the trailing 10 seconds never appears in either style,
-per rule 2 above — `hours` is zero right after `days`, so the run stops
-there.
+The last row illustrates the difference: `long` omits seconds beyond its
+three-unit window, while `short` always preserves them in the clock.
 
 ### 4.1 Suppressing the header (`--no-headers`)
 

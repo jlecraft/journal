@@ -212,6 +212,21 @@ journal -3
 Prints the 3 most recent entries, oldest to newest (like `tail`). Can't be
 combined with entry text, `-t/--tags`, or `-s/--search`.
 
+### Stopwatch wrapper
+
+The repository includes an executable `stopwatch` shell wrapper that keeps
+timing entries separate from the main journal:
+
+```sh
+stopwatch start coding
+stopwatch stopped for lunch
+stopwatch
+```
+
+Arguments are joined into one entry. With no arguments, the wrapper displays
+the most recent 1,000 entries using `--human-readable`. Entries are stored at
+`${XDG_DATA_HOME:-$HOME/.local/share}/journal/stopwatch.txt`.
+
 ### Timestamp display
 
 By default, every header shows the entry's fully resolved timestamp, with
@@ -244,27 +259,22 @@ free-form template:
 | `diff` value | Behavior | Example |
 |---|---|---|
 | `disabled` | No annotation at all -- just the date | `### 2026-07-28 14:03` |
-| `short` (default) | At most the 2 highest-order units from the first non-zero one, abbreviated, no direction word | `3d, 4h` |
+| `short` (default) | Non-zero calendar units plus an `HH:MM:SS` clock and direction | `3d 04:05:06 ago` |
 | `long` | At most the 3 highest-order units from the first non-zero one, spelled out, with a trailing direction word | `3 days, 4 hours ago` |
 
-Both styles pick units the same way: find the highest non-zero unit
-(years/months/days/hours/minutes/seconds) and anchor a fixed-size window
-there -- 2 units wide for `short`, 3 for `long`. Units outside that window
-never appear, no matter how many of the window's own units turn out to be
-zero; units *inside* the window that happen to be zero are just dropped
-from the output, without hiding a non-zero unit elsewhere in the same
-window. So `4 years, 0 months, 7 days` (window = years/months/days) shows
-as `4 years, 7 days`, while `29 days, 0 hours, 0 minutes, 10 seconds`
-(window = days/hours/minutes for `long`) shows as `29 days` -- the
-non-zero seconds sits past the window's edge and is never reached.
+`short` always shows hours, minutes, and seconds as a zero-padded clock.
+Non-zero years, months, and days are prepended as `y`, `m`, and `d`; zero
+calendar units are omitted. It always ends in `ago` or `from now`.
+`long` retains its three-unit window: it starts at the highest non-zero
+unit, drops zero values inside the window, and ignores units beyond it.
 
 More examples (elapsed time -> `long` -> `short`):
 
 | Elapsed | `long` | `short` |
 |---|---|---|
-| 30 seconds | `30 seconds ago` | `30s` |
-| 15 min, 22 sec | `15 minutes, 22 seconds ago` | `15m, 22s` |
-| 3 hr, 1 min, 16 sec | `3 hours, 1 minute, 16 seconds ago` | `3h, 1m` |
+| 30 seconds | `30 seconds ago` | `00:00:30 ago` |
+| 15 min, 22 sec | `15 minutes, 22 seconds ago` | `00:15:22 ago` |
+| 3 hr, 1 min, 16 sec | `3 hours, 1 minute, 16 seconds ago` | `03:01:16 ago` |
 
 See `journal-cli-spec.md` §4 for the full rationale (why exact-by-default,
 why `diff` is a preset rather than a template).

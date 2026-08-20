@@ -41,8 +41,8 @@ impl TimestampShape {
 pub enum DiffStyle {
     /// No elapsed-time annotation at all -- just the formatted date.
     Disabled,
-    /// The two highest non-zero units, abbreviated, no direction word:
-    /// `3h, 1m`.
+    /// Optional non-zero calendar units followed by a mandatory clock and
+    /// direction: `3d 04:05:06 ago`.
     #[default]
     Short,
     /// Up to three highest non-zero units, spelled out and pluralized,
@@ -565,7 +565,7 @@ fn add_months(dt: NaiveDateTime, n: u32) -> NaiveDateTime {
 }
 
 /// Renders the elapsed-time annotation for the parenthesized part of
-/// `-h/--human`'s header, per `style` (`[timestamp].diff` in config.toml).
+/// `-h/--human-readable`'s header, per `style` (`[timestamp].diff` in config.toml).
 /// Returns `None` for `DiffStyle::Disabled`, meaning no annotation at all
 /// (not even empty parens).
 fn render_diff(style: DiffStyle, then: NaiveDateTime, now: NaiveDateTime) -> Option<String> {
@@ -588,12 +588,24 @@ fn render_diff(style: DiffStyle, then: NaiveDateTime, now: NaiveDateTime) -> Opt
                 .collect();
             format!("{} {direction}", parts.join(", "))
         }
-        DiffStyle::Short => elapsed
-            .windowed_nonzero(2)
-            .into_iter()
-            .map(|(n, _, abbrev)| format!("{n}{abbrev}"))
-            .collect::<Vec<_>>()
-            .join(", "),
+        DiffStyle::Short => {
+            let direction = if elapsed.future { "from now" } else { "ago" };
+            let mut parts = Vec::new();
+            if elapsed.years != 0 {
+                parts.push(format!("{}y", elapsed.years));
+            }
+            if elapsed.months != 0 {
+                parts.push(format!("{}m", elapsed.months));
+            }
+            if elapsed.days != 0 {
+                parts.push(format!("{}d", elapsed.days));
+            }
+            parts.push(format!(
+                "{:02}:{:02}:{:02}",
+                elapsed.hours, elapsed.minutes, elapsed.seconds
+            ));
+            format!("{} {direction}", parts.join(" "))
+        }
     })
 }
 
@@ -898,42 +910,47 @@ mod tests {
     }
 
     #[test]
-    fn render_diff_short_matches_doc_examples() {
+    fn render_diff_short_shows_all_calendar_units_and_clock() {
         let (then, now) = elapsed_secs_ago(30);
-        assert_eq!(render_diff(DiffStyle::Short, then, now).unwrap(), "30s");
+        assert_eq!(render_diff(DiffStyle::Short, then, now).unwrap(), "00:00:30 ago");
         let (then, now) = elapsed_secs_ago(922);
-        assert_eq!(render_diff(DiffStyle::Short, then, now).unwrap(), "15m, 22s");
+        assert_eq!(render_diff(DiffStyle::Short, then, now).unwrap(), "00:15:22 ago");
         let (then, now) = elapsed_secs_ago(10876);
-        assert_eq!(render_diff(DiffStyle::Short, then, now).unwrap(), "3h, 1m");
+        assert_eq!(render_diff(DiffStyle::Short, then, now).unwrap(), "03:01:16 ago");
         let (then, now) = elapsed_secs_ago(2_120_495);
-        assert_eq!(render_diff(DiffStyle::Short, then, now).unwrap(), "24d, 13h");
-        // 2505610s = 29d 0h 0m 10s: the 2-unit window anchored at `days`
-        // covers days/hours only -- the non-zero seconds=10 sits past the
-        // window's edge and is never reached. Matches the original doc
-        // example exactly.
+        assert_eq!(render_diff(DiffStyle::Short, then, now).unwrap(), "24d 13:01:35 ago");
         let (then, now) = elapsed_secs_ago(2_505_610);
-        assert_eq!(render_diff(DiffStyle::Short, then, now).unwrap(), "29d");
+        assert_eq!(render_diff(DiffStyle::Short, then, now).unwrap(), "29d 00:00:10 ago");
     }
 
     #[test]
-    fn render_diff_short_never_shows_more_than_the_unit_right_after_the_highest() {
-        // Window anchored at `days` is only 2 wide (days, hours) -- a
-        // non-zero `minutes` a further step down must never appear, no
-        // matter how the window's own two units turn out.
-        let secs = 5 * 86400 + 47 * 60; // 5d, 0h, 47m
-        let (then, now) = elapsed_secs_ago(secs);
-        assert_eq!(render_diff(DiffStyle::Short, then, now).unwrap(), "5d");
-
-        let secs = 5 * 86400 + 3 * 3600 + 47 * 60; // 5d, 3h, 47m
-        let (then, now) = elapsed_secs_ago(secs);
-        assert_eq!(render_diff(DiffStyle::Short, then, now).unwrap(), "5d, 3h");
+    fn render_diff_short_omits_zero_calendar_units() {
+        let then = ts(2021, 6, 20, 7, 54, 54);
+        let now = ts(2025, 6, 27, 12, 0, 0);
+        assert_eq!(render_diff(DiffStyle::Short, then, now).unwrap(), "4y 7d 04:05:06 ago");
     }
 
     #[test]
-    fn render_diff_short_has_no_direction_word() {
+    fn render_diff_short_matches_full_requested_format() {
+        let then = ts(1973, 1, 1, 0, 0, 0);
+        let now = ts(2025, 11, 14, 14, 30, 58);
+        assert_eq!(
+            render_diff(DiffStyle::Short, then, now).unwrap(),
+            "52y 10m 13d 14:30:58 ago"
+        );
+    }
+
+    #[test]
+    fn render_diff_short_future_uses_from_now() {
         let now = ts(2026, 7, 30, 12, 0, 0);
-        let then = now + chrono::Duration::days(3);
-        assert_eq!(render_diff(DiffStyle::Short, then, now).unwrap(), "3d");
+        let then = now + chrono::Duration::days(3) + chrono::Duration::seconds(1);
+        assert_eq!(render_diff(DiffStyle::Short, then, now).unwrap(), "3d 00:00:01 from now");
+    }
+
+    #[test]
+    fn render_diff_short_all_zero_is_still_a_full_clock() {
+        let now = ts(2026, 7, 30, 12, 0, 0);
+        assert_eq!(render_diff(DiffStyle::Short, now, now).unwrap(), "00:00:00 ago");
     }
 
     #[test]
@@ -954,7 +971,7 @@ mod tests {
         };
         let header = e.display_header(&opts);
         assert!(header.starts_with(&format!("### {}", e.timestamp.resolved().format("%Y-%m-%d %H:%M"))));
-        assert!(header.contains("(3d)"));
+        assert!(header.contains("(3d 00:00:00 ago)"));
     }
 
     #[test]

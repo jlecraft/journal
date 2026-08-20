@@ -1,0 +1,19 @@
+#!/bin/sh
+set -eu
+
+data_home=${XDG_DATA_HOME:-"${HOME:?HOME must be set when XDG_DATA_HOME is unset}/.local/share"}
+stopwatch_file=$data_home/journal/stopwatch.txt
+
+if [ "$#" -eq 0 ]; then
+    exec journal --file "$stopwatch_file" --human-readable -1000
+fi
+
+mkdir -p "$data_home/journal"
+
+text=$1
+shift
+for argument do
+    text="$text $argument"
+done
+
+exec journal --file "$stopwatch_file" -- "$text"
